@@ -175,3 +175,4 @@ mono_crash.*
 # Workspace files
 *.code-workspace
 "config/profile.py" 
+"config/constants.py" 
