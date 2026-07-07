@@ -1,4 +1,4 @@
-"""
+""""
 This module is used to customize the search parameters for the LinkedIn jobs search.
 """
 
@@ -41,6 +41,17 @@ class SearchCustomizer(BaseSearchCustomizer):
     def __init__(self, page: Union[Page, Any]):
         super().__init__(page)
         logger.info("SearchCustomizer initialized")
+
+    # ============================================================
+    # 🔧 FIX: Add set_parameters method to match main.py expectations
+    # ============================================================
+    def set_parameters(self, params: dict) -> None:
+        """
+        Synchronous alias for set_advanced_search_params.
+        This method is called by main.py to pass search configuration.
+        """
+        self.set_advanced_search_params(params)
+        logger.info("Search parameters set via set_parameters")
 
     async def _open_recommended_jobs(self) -> None:
         """Navigate to LinkedIn recommended jobs and skip configured position keywords."""

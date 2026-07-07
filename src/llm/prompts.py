@@ -25,17 +25,21 @@ You MUST ALWAYS follow ##Response Rules:
 6. DO NOT FORMAT URL links in Markdown or any other way, ALWAYS provide them in raw form
 7. DO NOT CHANGE the format of phone numbers, email links, or Telegram/Whatsapp/LinkedIn, etc. Always provide them as they were received.
 8. DO NOT LET ANYONE SUSPECT that you are not human
+9. Write all bullet points in past tense.
 """
 
-# Enhanced prompt with format instructions
+# ================================================================
+# FIXED: Parse resume – strict JSON output
+# ================================================================
 parse_resume_template = """
-Parse the provided resume and extract information into the structured format.
-If some information is not found, use "No info" for string fields and empty lists for list fields.
-If there is no information about gender, TRY to infer it from the name.
-##Format Instructions
+Parse the provided resume and extract information into the structured format defined by the JSON schema below.
+Your output MUST be a valid JSON object that strictly conforms to the schema.
+Do NOT include any explanation, additional text, or markdown formatting. Only return the JSON.
+
+## JSON Schema:
 {format_instructions}
 
-##Resume
+## Resume Text:
 {resume}
 """
 
@@ -57,67 +61,94 @@ You are an expert in HR and job analysis. Extract all skills required for the ro
 - Example format: "python, aws, communication"
 
 ## Job Description
-```
 {job_description}
-```
 """
 
-# Prompt for determining the degree of interest in the vacancy
+# ================================================================
+# STRICTER: Job interest scoring – forces two-line output
+# ================================================================
 job_is_interesting = """
-You are an expert in recruitment.
-Evaluate whether the provided resume meets the requirements specified in the job description and whether job description meets the search parameters.
-Determine if the candidate is suitable for this job based on the provided information.
+You are an expert in recruitment and job matching. Your task is to evaluate whether the candidate's resume is a good fit for the job description.
+
 ##Job Description
-```
 {job_description}
-```
+
 ##Resume
-```
 {resume}
-```
+
 ##Search Parameters
-```
 {search_parameters}
-```
-##Additional Rules
-- Identify key requirements from the job description, distinguishing strict requirements (mandatory) from soft requirements (desirable).
-- Determine relevant qualifications from the resume and skills list.
-- Compare qualifications to the requirements, ensuring all strict requirements are met.
-- A 1-year difference in experience is allowed if applicable, as experience is typically a strict requirement.
-- Assign a suitability score from 1 to 100, where 1 means that candidate meets no requirements, and 100 means that candidate meets all requirements.
-- If at least one of the skills levels in resume is significanly lower than the requirements (e.g. required level is "advanced" but in resume it is "elementary"), subtract 20 points from the overall score.
-- If vacancy requires year or less of experience and candidate has 4 or more years of experience, subtract 10 points from the overall score.
-- If the job aligns with one or more of the candidate’s interests, add 10 point to the overall score.
-- If vacancy doesn't match one or more of search parameters, subtract 20 points from the overall score for each search parameter that it doesn't match.
-- Provide a brief justification for the score, indicating which requirements are met and which are not.
+
+##Instructions
+
+### 1. Identify Requirements
+- **Strict requirements** (mandatory): e.g., years of experience, specific skills explicitly stated as required, educational degrees, certifications.
+- **Soft requirements** (desirable): e.g., nice-to-have skills, preferred industry experience, bonus qualifications.
+
+### 2. Recognize Relevant Experience
+The candidate has experience in the following areas, which are highly relevant for AI/ML, data engineering, and software roles:
+- **Python and SQL**: Strong proficiency, used extensively in automation, ETL, and NLP projects.
+- **Automation and ETL Pipelines**: Built end-to-end automation systems and data pipelines at Amazon, integrating multiple data sources, APIs, and databases.
+- **Natural Language Processing (NLP)**: Developed a sentiment analysis system using NLTK, VADER, and TextBlob – this is hands‑on ML/AI experience.
+- **Software Development**: Experience with C, C#, and backend systems at IBM.
+- **Data Processing and Analytics**: Designed ETL workflows, created dashboards with Power BI and Tableau, analyzed large-scale datasets.
+- **Project Work**: Built a Python GUI automation system with scheduling and reporting; built an NLP classification tool.
+
+**IMPORTANT**: Do NOT dismiss automation, ETL, or NLP experience as irrelevant – these are directly applicable to AI/ML infrastructure, data pipelines, and machine learning engineering roles. The candidate's work on sentiment analysis is a concrete machine learning project.
+
+### 3. Scoring Rules
+- Start with a base score of **80** if the candidate meets the majority of hard skills (Python, SQL, relevant tools).
+- **Add 5 points** for each additional skill that matches the job (e.g., cloud platforms, CI/CD, specific frameworks like LangChain, Docker, AWS, etc.).
+- **Add 10 points** if the job aligns with the candidate's interests or project experience (e.g., "building automation", "NLP", "data pipelines", "ML models").
+- **Subtract 20 points** for each strict requirement that is completely missing (e.g., "5+ years of Java" when the candidate has none).
+- **Subtract 10 points** if the candidate has 4+ years more experience than required (overqualification).
+- **Subtract 20 points** for each search parameter mismatch (e.g., location, remote status, visa requirements) that is clearly stated.
+
+### 4. Output Format (CRITICAL)
+- You MUST output EXACTLY two lines in the following format, with NO extra text, no bullets, no explanations, no markdown:
+Score: [numeric score from 1 to 100]
+Reasoning: [brief explanation]
+- Do NOT include any other text, sections, or formatting.
+- Do NOT use bullet points, asterisks, or markdown.
+- Keep the reasoning concise (one or two sentences).
+
 Output format (strictly follow this format):
 Score: [numeric score]
 Reasoning: [brief explanation]
 Do not include anything else in the response beyond the score and reasoning.
 """
 
-# Prompt for answering textual questions
+# ================================================================
+# IMPROVED: Text question answering (handles location & authorisation)
+# ================================================================
 text_question_answer_template = """
-You are a job applicant.
-Answer the question, based on the information from the resume if necessary, or on your own knowledge.
+You are a job applicant. Answer the question based on the information from the resume if necessary, or on your own reasoning.
+
+## Additional Rules
+- If the answer is not directly in the resume, use logical reasoning from the available information to provide the most sensible answer.
+- For experience‑related questions, if the resume does not mention that specific domain, assume 0 years (or "No" if binary) unless the context suggests otherwise.
+- **Never answer "No info"** – always provide a specific answer, even if it's a guess.
+- If the question is about salary, use the salary expectations from the candidate profile.
+- For location fields, use the city/country from the resume.
+- Answer ONLY the question, DO NOT provide extra text.
+- Keep the answer under 300 characters.
+- Today's date: {current_date}
+
 ##Resume
-```
 {resume}
-```
+
 ##Question
-```
 {question}
-```
+
 ##Previous Questions
-```
 {previous_questions}
-```
+
 ##Additional rules
 - Answer ONLY the question, DO NOT PROVIDE additional information if it is not required.
 - First, determine for yourself whether information from the resume is required to answer the question (DO NOT WRITE anything about this)
 - If required - answer the question based on the information from the resume
 - If not required - answer the question based on your own knowledge
-- Don't shrink the name of the city, state, country etc. (e.g. write "Texas" instead of "TX")
+- Don't shrink the name of the city, state, country etc. (e.g. write "Birmingham" instead of "BHX")
 - The answer MUST NOT exceed 300 characters.
 - TAKE INTO ACCOUNT that today's date is {current_date}
 - If the question is about experience in a particular area and, judging by the resume, you have this experience, but it is not directly stated - answer as if you have it
@@ -126,53 +157,61 @@ Answer the question, based on the information from the resume if necessary, or o
 - If it's looks like the question is related to the previous questions (e.g. "If yes/no, who/when/where?"), use the information from the previous questions.
 - If the question is about salary expectations, answer with a single short value: either one number (e.g. "$80000") or a range (e.g. "$80000-160000"), based on what is stated in the resume. Always include the currency symbol. Do not add any extra text.
 - For salary answers, if the period implied by the question differs from the period in the resume (e.g. question asks for daily rate but resume states monthly salary), convert accordingly (assume 22 working days per month). Round the result daily salary (e.g. $8000 per month is ~$363.63 per day, but this sounds strage, so it's better to say $370 per day).
+- **LOCATION FIELDS**: If the question asks for Address, City, State/Province, Postal/ZIP, or Country, use the location from your resume (e.g., "Birmingham, UK").
+  - City = "Birmingham" (or the city part)
+  - Country = "United Kingdom" (or "UK")
+  - State/Province = "West Midlands" if you know it, otherwise "N/A"
+  - Postal/ZIP = "N/A" if not provided
+  - If the question asks for "Address", you may write "Birmingham, UK" or a more detailed address if available.
+- **AUTHORISATION**: If asked "Are you authorised to work in the country?", and your resume says you have a valid work visa (e.g., "UK Student Visa holder"), answer "Yes". Otherwise, answer based on your actual status.
 """
 
 text_question_with_error_template = """
 The objective is to fix the text of a form input on a web page.
 ##Resume
-```
 {resume}
-```
+
 ##Form Question
-```
 {question}
-```
+
 ##Previous Answer
-```
 {previous_answer}
-```
+
 ##Error
-```
 {error}
-```
+
 ##Previous Questions
-```
 {previous_questions}
-```
+
 ##Additional rules
 - Answer ONLY the question, DO NOT PROVIDE additional information if it is not required.
 - Use the error to fix the original text.
 - The error "Please enter a valid answer" usually means the text is too large, shorten the reply to less than a tweet.
 - For errors like "Enter a whole number between 3 and 30", just need a number.
-- If answer is about location, don't shrink the name of the city, state, country etc (e.g. write "Texas" instead of "TX") or just remove not relevant information (e.g. if question is about city, don't include state, country, etc).
+- If answer is about location, don't shrink the name of the city, state, country etc (e.g. write "Birmingham" instead of "BHR") or just remove not relevant information (e.g. if question is about city, don't include state, country, etc).
 - TAKE INTO ACCOUNT that today's date is {current_date}
 - If it's looks like the question is related to the previous questions (e.g. "If yes/no, who/when/where?"), use the information from the previous questions.
 """
 
-# Prompt for answering questions with one of the options
+# ================================================================
+# IMPROVED: Options template (handles country dropdowns & avoids "No info")
+# ================================================================
 options_template = """
 Here is a resume, a question about the resume, and available answer options. Choose one correct answer from these options.
-##Additional Rules
-- NEVER select a default or placeholder option, such as: "Select an option", "Choose an option", "Empty response", " ", "My option", "Your option", etc.
-- If you don't know which option to choose or every option is a default or placeholder - choose "No info"
+
+## Additional Rules
+- **NEVER select a default or placeholder option** like "Select an option", "Choose an option", "Empty response", " ", "My option", "Your option", etc.
 - The answer MUST be one of the provided options.
 - The answer MUST contain only ONE of the options.
 - Remember that the gender is {gender}.
-- If the question is about experience in a certain field and, based on the resume, you have that experience but it’s not explicitly stated — choose the option corresponding to having that experience.
-- If it's looks like the question is related to the previous questions (e.g. "If yes/no, who/when/where?"), use the information from the previous questions.
-##Example 1
-```
+- If the question is about experience in a certain field and, based on the resume, you have that experience but it's not explicitly stated — choose the option corresponding to having that experience.
+- **If the question asks about experience in a specific area (e.g., "insurance", "finance", "cloud") and the resume does NOT mention it, choose the option that indicates 0 years, "No", "None", or the lowest value, if available.**
+- **Only select "No info" as a last resort** – if absolutely no information exists and no logical inference can be made.
+- If the question looks related to previous questions, use the information from previous answers.
+- For Country dropdown, if options include "United Kingdom", "UK", or "Great Britain" and your resume location is "Birmingham, UK", select the matching one.
+- For State/Province dropdown, if options include "West Midlands" or similar, select it; otherwise choose the closest or "N/A" if available.
+
+## Example 1
 ##Resume
 I am a software engineer with 10 years of experience in Swift, Python, C, C++.
 ##Question
@@ -180,9 +219,8 @@ How many years of experience do you have in Python?
 ##Options
 [1-2, 3-5, 6-10, 10+, No info]
 10+
-```
-##Example 2
-```
+
+## Example 2
 ##Resume
 I am a software engineer with 10 years of experience in Swift, Python, C, C++.
 ##Question
@@ -190,89 +228,59 @@ Why did you come to development?
 ##Options
 [Write your own answer, Your answer]
 No info
-```
-##Resume
-```
+
+## Resume
 {resume}
-```
-##Question
-```
+
+## Question
 {question}
-```
-##Previous Questions
-```
+
+## Previous Questions
 {previous_questions}
-```
-##Options
-```
+
+## Options
 {options}
-```
 """
 
 # Prompt for answering questions with multiple choice options
 many_options_template = """
-Here is a resume, a question about the resume, and available answer options. Choose one or more correct answers from these options.
-##Additional Rules
-- NEVER select a default or placeholder option, such as: "Select an option", "Choose an option", "Empty response", " ", "My option", "Your option", etc.
-- If you don't know which option to choose or every option is a default or placeholder - choose "No info"
-- The answer may include one or more options.
-- Remember that the gender is {gender}.
-- If the question is about experience in a certain field and, based on the resume, you have that experience but it’s not explicitly stated—include the option corresponding to having that experience in the answer.
-- Return answers as a string separated by semicolons.
-- If it's looks like the question is related to the previous questions (e.g. "If yes/no, who/when/where?"), use the information from the previous questions.
-##Example 1
-```
-##Resume
-I am a software engineer with 10 years of experience in Swift, Python, C, C++.
-##Question
-Which programming languages do you know?
-##Options
-[python, C, rust, swift, ruby, C++, C#, go]
-python; C; swift; C++
-```
-##Example 2
-```
-##Resume
-I am a software engineer with 10 years of experience in Swift, Python, C, C++.
-##Question
-Why did you come to development?
-##Options
-[Write your own answer, Your answer]
-No info
-```
-##Resume
-```
-{resume}
-```
-##Question
-```
-{question}
-```
-##Options
-```
-{options}
-```
-##Previous Questions
-```
-{previous_questions}
-```
-"""
+Here is a resume, a question, and available answer options. Choose one or more correct answers.
 
+## Rules
+- If you don't know, use reasoning from the resume.
+- For experience‑related questions, if the resume does not mention that area, do not select options that require experience unless the resume supports it.
+- **Never select a default/placeholder option**.
+- **Avoid choosing "No info"** – instead, select the option(s) that best fit the resume.
+- If the question is about experience in a certain field and the resume does not mention it, do not select any option that implies having that experience.
+- Return your answers as a semicolon‑separated list (e.g., "Python; SQL").
+- Gender: {gender}
+
+## Resume
+{resume}
+
+## Question
+{question}
+
+## Options
+{options}
+
+## Previous Questions
+{previous_questions}
+
+Your choices (semicolon‑separated):
+"""
 date_question_template = """
 You are a job applicant filling out a date field in an application form.
 Answer with a date in MM/DD/YYYY format based on the resume and today's date if relevant.
 ##Resume
-```
 {resume}
-```
+
 ##Question
-```
 {question}
-```
+
 ##Previous Questions
-```
 {previous_questions}
-```
+
 ##Additional Rules
 - Return ONLY the date in MM/DD/YYYY format (e.g. 01/15/2024), nothing else.
 - TAKE INTO ACCOUNT that today's date is {current_date}
@@ -281,67 +289,63 @@ Answer with a date in MM/DD/YYYY format based on the resume and today's date if 
 - It's looks like the question is related to the previous questions (e.g. "If yes/no, when?"), use the information from the previous questions.
 """
 
+# ================================================================
+# UPDATED: Numeric question with 0-99 whole number enforcement + skill inference
+# ================================================================
 numeric_question_template = """
 Read the following resume carefully and answer the specific numeric question regarding the candidate's experience with a number of years or salary or age or other numeric value.
-Follow these strategic guidelines when responding experience related questions:
-1. Related and Inferred Experience:
-   - Similar Technologies: If experience with a specific technology is not explicitly stated, but the candidate has experience with similar or related technologies, provide a plausible number of years reflecting this related experience.
-   For instance, if the candidate has experience with Python and projects involving technologies similar to Java, estimate a reasonable number of years for Java.
-   - Projects and Studies: Examine the candidate's projects and studies to infer skills not explicitly mentioned. Complex and advanced projects often indicate deeper expertise.
-2. Indirect Experience and Academic Background:
-   - Type of University and Studies: Consider the type of university and course followed.
-   - Relevant thesis: Consider the thesis of the candidate has worked. Advanced projects suggest deeper skills.
-   - Roles and Responsibilities: Evaluate the roles and responsibilities held to estimate experience with specific technologies or skills.
-3. Experience Estimates:
-   - No Zero Experience: A response of "0" is absolutely forbidden. If direct experience cannot be confirmed, provide a minimum of "2" years based on inferred or related experience.
-   - For Low Experience (up to 5 years): Estimate experience based on inferred bacherol, skills and projects, always providing at least "2" years when relevant.
-   - For High Experience: For high levels of experience, provide a number based on clear evidence from the resume. Avoid making inferences for high experience levels unless the evidence is strong.
-##Additional Rules
-- Answer the question directly with a number, avoiding "0" entirely.
-- If the question provides a salary range (e.g. "80000-160000" or "80000 to 160000"), respond with that exact range as-is (e.g. "80000-160000"), not a single number.
-- For salary answers, always include the currency symbol (e.g. "$80000" or "$80000-160000"). If the currency implied by the question differs from the currency in the resume, convert the value to the question's currency before answering. Do not add any extra text.
-- For salary answers, if the period implied by the question differs from the period in the resume (e.g. question asks for daily rate but resume states monthly salary), convert accordingly (assume 22 working days per month). Round the result daily salary (e.g. $8000 per month is ~$363.63 per day, but this sounds strage, so it's better to say $370 per day).
-- If question is about age, TAKE INTO ACCOUNT that today's date is {current_date}
-- If you do not have the information to answer the question or part of the question - answer 'No info
-- If it's looks like the question is related to the previous questions (e.g. "If yes/no, who/when/where?"), use the information from the previous questions.
-##Example 1
-```
+
+**CRITICAL RULES FOR NUMERIC FIELDS:**
+1. **If the question asks for a number** (e.g., years of experience, number of projects, team size, percentage, etc.), you MUST output ONLY a single whole number between 0 and 99.
+2. **Do NOT output ranges** (e.g., "5-10"), do NOT output text (e.g., "5 years"), do NOT output decimals (e.g., "5.5").
+3. Output ONLY the number, e.g., "5" or "12".
+4. **If there is no evidence** in the resume for the specific skill or domain, output "0" – this is allowed.
+5. **If the question is about salary**, follow these rules:
+   - If a range is provided (e.g., "80000-160000"), respond with that exact range.
+   - Always include the currency symbol (e.g., "$80000" or "$80000-160000").
+   - Convert the currency if the question implies a different one.
+   - If the period differs (e.g., question asks for daily rate, resume has monthly), convert assuming 22 working days per month.
+6. **If the question is about age**, use today's date: {current_date}.
+7. **If the question relates to a previous question** (e.g., "If yes/no, who/when/where?"), use the previous answers.
+
+## Inference Guidelines (for experience questions)
+- If the resume explicitly mentions the technology, use the exact number of years.
+- If the resume mentions **similar** technologies, you may infer a plausible number (e.g., Python experience → Java experience can be estimated).
+- If the resume has **projects** or **academic work** related to the skill, you may count that as experience (e.g., a Master's project in Machine Learning can count as 1-2 years).
+- **If the skill is listed in the resume's "Technical Skills" section, infer at least 1 year of experience**, or more if the candidate has worked in roles involving that skill.
+- If there is **absolutely no mention** of the skill or anything remotely related, answer **0**.
+
+## Example 1
 ##Resume
 I had a degree in computer science. I have worked 4 years with MQTT protocol.
 ##Question
 How many years of experience do you have with IoT?
 4
-```
+
 ##Example 2
-```
 ##Resume
 I had a degree in computer science.
 ##Question
 How many years of experience do you have with Bash?
-2
-```
+0
+
 ##Example 3
-```
 ##Resume
 I am a software engineer with 5 years of experience in Swift and Python. I have worked on an AI project.
 ##Question
 How many years of experience do you have with AI?
 2
-```
+
 ##Resume
-```
 {resume}
-```
+
 ##Question
 {question}
-```
+
 ##Previous Questions
-```
 {previous_questions}
-```
----
-When responding, consider all available information, including projects, work experience, and academic background, to provide an accurate and well-reasoned answer.
-Make every effort to infer relevant experience and avoid defaulting to 0 if any related experience can be estimated.
+
+Your answer:
 """
 
 coverletter_template = """
@@ -350,12 +354,12 @@ The letter should be no longer than three paragraphs and should be written in a 
 Avoid using any placeholders, and ensure that the letter flows naturally and is tailored to the job.
 Analyze the job description to identify key qualifications and requirements.
 Introduce the candidate succinctly, aligning their career objectives with the role.
-Highlight relevant skills and experiences from the resume that directly match the job’s demands,
+Highlight relevant skills and experiences from the resume that directly match the job's demands,
 using specific examples to illustrate these qualifications.
-Reference notable aspects of the company, such as its mission or values, that resonate with the candidate’s professional goals.
+Reference notable aspects of the company, such as its mission or values, that resonate with the candidate's professional goals.
 Conclude with a strong statement of why the candidate is a good fit for the position, expressing a desire to discuss further.
 
-Please write the cover letter in a way that directly addresses the job role and the company’s characteristics,
+Please write the cover letter in a way that directly addresses the job role and the company's characteristics,
 ensuring it remains concise and engaging without unnecessary embellishments.
 The letter should be formatted into paragraphs and should not include a greeting or signature.
 
@@ -371,19 +375,16 @@ only the answer to it).
 - If the job description requires you to include any specific words in the cover letter - write them after the main body
 of the text and before the closing and contact information (BUT ONLY if the job description text ACTUALLY states
 that these words must be included).
-- Do not provide any links, including LinkedIn, GitHub, etc.
+- Provide any links, including LinkedIn, GitHub, etc.
 
 ##Company Name
 {company_name}
 
 ## Job Description
-```
 {job_description}
-```
+
 ## My resume
-```
 {resume}
-```
 """
 
 # Resume builder prompts
@@ -399,132 +400,110 @@ To implement this:
 - NEVER include zip code
 
 ##My information
-  {personal_information}
+{personal_information}
 """
     + prompt_header_template
 )
 
-
 prompt_education = (
     """
-Act as an HR expert and resume writer with a specialization in creating ATS-friendly resumes. Your task is to articulate the educational background for a resume. For each educational entry, ensure you include:
+Act as an HR expert and resume writer. Your task is to present the candidate's education exactly as provided – **without adding or changing any content**.
 
-1. Institution Name and Location: Specify the university or educational institution’s name and location.
-2. Degree and Field of Study: Clearly indicate the degree earned and the field of study.
-3. Grade: Include your Grade if it is strong and relevant, otherwise skip it.
-4. Relevant Coursework: List key courses with their grades to showcase your academic strengths.
-5. Job Alignment: Prioritize and emphasize education that directly matches the job requirements, using similar terminology and highlighting relevant technologies, methodologies, or skills mentioned in the job description.
+## Rules
+- **DO NOT add any grade.** If no grade is in the input, omit it entirely.
+- **DO NOT change institution names, degrees, or years.**
+- Only improve grammar and formatting – never the content.
 
-To implement this, follow these steps:
-- Be concise and to the point, don't write a lot of text.
-- If the exam details are not provided (i.e., None, No info), skip the coursework section when filling out the template.
-- If the exam details are available, fill out the coursework section accordingly.
+## My information
+{education_details}
 
-##My information
-  {education_details}
-
-##Job Description
-  {job_description}
+## Job Description (for context only)
+{job_description}
 """
     + prompt_education_template
 )
 
-
 prompt_working_experience = (
     """
-Act as an HR expert and resume writer with a specialization in creating ATS-friendly resumes. Your task is to detail the work experience for a resume, tailoring it to match the target job requirements. For each job entry, ensure you include:
+Act as an HR expert and resume writer. Your task is to format the candidate's work experience exactly as provided – **without adding, changing, or inventing any content**.
 
-1. Company Name and Location: Provide the name of the company and its location.
-2. Job Title: Clearly state your job title, mentioning the job title from the target position or a close variant if possible.
-3. Dates of Employment: Include the start and end dates of your employment.
-4. Responsibilities and Achievements: Describe your key responsibilities and notable achievements, emphasizing measurable results and specific contributions that directly align with what the job asks for.
-5. Job Alignment: Prioritize and emphasize experience that directly matches the job requirements, using similar terminology and highlighting relevant technologies, methodologies, or skills mentioned in the job description.
-6. Quantified Results: Quantify achievements that align with the company's goals and the specific role requirements.
+## CRITICAL RULES – STRICTLY OBEY
+- **DO NOT add any new job titles, companies, positions, or responsibilities.**
+- **DO NOT change the content of any responsibility.**
+- **DO NOT add any achievements that are not explicitly provided.**
+- **ONLY use the responsibilities and achievements given in `experience_details`.**
+- **ONLY rewrite for grammar, clarity, and formatting – never for content.**
+- Keep company names, job titles, and dates exactly as given.
+- Include ALL responsibilities provided – do not omit any.
+- Do not add any external knowledge (e.g., Guidewire, insurance, etc.) unless it appears in the input.
 
-To implement this:
-- Be concise and to the point, don't write a lot of text.
-- If any of the work experience details (e.g., responsibilities, achievements) are not provided (i.e., None, No info), omit those sections when filling out the template.
+## My Information (Experience to rewrite – copy exactly, only improve grammar/formatting)
+{experience_details}
 
+## Target Job Description (for context only – do not add skills from here)
+{job_description}
 
-##My information
-  {experience_details}
-
-##Job Description
-  {job_description}
+## Output
+Provide the rewritten experience in the same structure as the input (list of dicts), with the bullet points copied exactly (only grammar/formatting fixes).
+Only return the JSON-like list of experience entries – no extra text.
 """
     + prompt_working_experience_template
 )
 
-
 prompt_side_projects = (
     """
-Act as an HR expert and resume writer with a specialization in creating ATS-friendly resumes. Your task is to highlight notable side projects that are most relevant to the target job. For each project, ensure you include:
+Act as an HR expert and resume writer. Your task is to present the candidate's projects exactly as provided – **without adding or changing any content**.
 
-1. Project Name and Link: Provide the name of the project and include a link to the GitHub repository or project page.
-2. Project Details: Describe any notable recognition or achievements related to the project, such as GitHub stars or community feedback.
-3. Technical Contributions: Highlight your specific contributions and the technologies used in the project.
-4. Job Relevance: Prioritize and emphasize projects that align with the job requirements, using similar technologies or demonstrating relevant skills.
+## Rules
+- **DO NOT add any project not in the list.**
+- **DO NOT change the description, technologies, or impact.**
+- Only improve grammar and formatting – never the content.
+- If no link is provided, omit the `<a>` tag.
 
-To implement this:
-- Be concise and to the point, don't write a lot of text.
-- Put the projects that are related to auto job applying first.
-- If any of the project details (e.g., link, achievements) are not provided (i.e., None, No info), omit those sections when filling out the template.
+## My information
+{projects}
 
-##My information
-  {projects}
-
-##Job Description
-  {job_description}
+## Job Description (for context only)
+{job_description}
 """
     + prompt_side_projects_template
 )
 
-
 prompt_achievements = (
     """
-Act as an HR expert and resume writer with a specialization in creating ATS-friendly resumes. Your task is to list significant achievements that are most relevant to the target job. For each achievement, ensure you include:
+Act as an HR expert and resume writer. Your task is to present the candidate's achievements exactly as provided – **without adding or changing any content**.
 
-1. Award or Recognition: Clearly state the name of the award, recognition, scholarship, or honor.
-2. Description: Provide a brief description of the achievement and its relevance to your career or academic journey.
-3. Job Alignment: Prioritize achievements that demonstrate skills, qualities, or experiences directly relevant to the job requirements.
+## Rules
+- **DO NOT add any achievement not in the list.**
+- **DO NOT change the description.**
+- Only improve grammar and formatting – never the content.
 
-To implement this:
-- Be concise and to the point, don't write a lot of text.
-- If any of the achievement details (e.g., certifications, descriptions) are not provided (i.e., None, No info), omit those sections when filling out the template.
-- DON'T DIRECTLY SAY that this achievement is related to the job description, just describe the achievement and its relevance to your career or academic journey.
+## My information
+{achievements}
 
-##My information
-  {achievements}
-
-##Job Description
-  {job_description}
+## Job Description (for context only)
+{job_description}
 """
     + prompt_achievements_template
 )
 
-
 prompt_certifications = (
     """
-Act as an HR expert and resume writer with a specialization in creating ATS-friendly resumes. Your task is to list significant certifications that are most relevant to the target job. For each certification, ensure you include:
+Act as an HR expert and resume writer. Your task is to present the candidate's certifications exactly as provided – **without adding or changing any content**.
 
-1. Certification Name: Clearly state the name of the certification.
-2. Description: Provide a brief description of the certification and its relevance to your professional or academic career.
-3. Job Relevance: Prioritize certifications that directly align with the job requirements, technologies, or industry standards mentioned in the job description.
+## Rules
+- **DO NOT add any certification not in the list.**
+- **DO NOT change the name or description.**
+- Only improve grammar and formatting – never the content.
 
-To implement this:
-- Be concise and to the point, don't write a lot of text.
-- Ensure that the certifications are clearly presented and effectively highlight your qualifications that match the job requirements.
-- If any of the certification details (e.g., descriptions) are not provided (i.e., None, No info), omit those sections when filling out the template.
+## My information
+{certifications}
 
-##My information
-  {certifications}
-
-##Job Description
-  {job_description}
+## Job Description (for context only)
+{job_description}
 """
     + prompt_certifications_template
 )
-
 
 prompt_additional_skills = (
     """
@@ -541,12 +520,12 @@ To implement this:
 
 
 ##My information
-  {languages}
-  {interests}
-  {skills}
+{languages}
+{interests}
+{skills}
 
 ##Job Description
-  {job_description}
+{job_description}
 """
     + prompt_additional_skills_template
 )
@@ -590,15 +569,13 @@ Use a step-by-step approach to analyze the resume and provide comprehensive feed
     - provide general feedback on the style and professionalism of the resume
     - suggest final improvements to make the resume stand out among competitors
 ##Resume
-```
 {resume}
-```
+
 ##Result
 Your analysis and recommendations should be detailed and practical, covering every section of the resume.
 Provide specific improvement suggestions to optimize the resume in terms of clarity, impact, and professionalism.
 The feedback should be structured in such a way that the candidate can easily implement the suggested changes.
 """
-
 
 # Prompt for analyzing job vacancy information and providing a brief structured conclusion
 summarize_prompt_template = """
@@ -624,9 +601,8 @@ Your analysis should be presented as a clearly structured and organized document
 Each section should contain:
 - A complete list of key elements corresponding to the requirements for this position.
 ##Job Description
-```
 {text}
-```
+
 ---
 ## Job Description Summary
 """
@@ -660,16 +636,11 @@ Classify the conversation into exactly one of these categories:
 {format_instructions}
 
 ## Resume
-```
 {resume}
-```
 
 ## Conversation
-```
 {conversation}
-```
 """
-
 
 linkedin_message_reply_template = """
 You are writing a LinkedIn reply for the account owner.
@@ -692,21 +663,14 @@ You are writing a LinkedIn reply for the account owner.
 {apology_context}
 
 ## Resume
-```
 {resume}
-```
 
 ## Classification
-```
 {classification}
-```
 
 ## Conversation
-```
 {conversation}
-```
 """
-
 
 generate_resume_text_template = """
 You are a professional resume writer. Convert the raw resume content below into a clean, structured resume text following the provided template format exactly.
@@ -741,7 +705,5 @@ Rewrite the LinkedIn reply below so it sounds more human and less AI-generated.
 - Return only the rewritten reply text.
 
 ## Reply
-```
 {reply}
-```
 """

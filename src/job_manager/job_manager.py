@@ -7,7 +7,16 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
-from config.app_config import COLLECT_INFO_MODE, JOB_SITE, MAX_APPLIES_NUM, TEST_MODE
+from config.app_config import (
+    COLLECT_INFO_MODE,
+    EASY_APPLY_ONLY,
+    JOB_SITE,
+    MAX_APPLIES_NUM,
+    MIN_INTEREST_SCORE,
+    TEST_MODE,
+    # ===== NEW: import the disable flag =====
+    DISABLE_RESUME_RECOMMENDATIONS,
+)
 from config.constants import OUTPUT_DIR_INDEED, OUTPUT_DIR_LINKEDIN
 from config.logger_config import logger
 from src.dashboard.runtime import emit_event
@@ -39,14 +48,10 @@ class BaseJobManager(ABC):
 
     @staticmethod
     def _define_output_file(filename: str) -> Path:
-        """Define the path to the output file"""
-        try:
-            output_file = os.path.join(Path(OUTPUT_DIR), filename)
-            logger.info(f"The path to the output file has been defined: {output_file}")
-        except Exception:
-            tb_str = traceback.format_exc()
-            logger.error(f"Error in defining the location of the file: {tb_str}")
-            raise
+        """Define the path to the output file and ensure the parent directory exists."""
+        output_file = Path(OUTPUT_DIR) / filename
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"The path to the output file has been defined: {output_file}")
         return output_file
 
     def set_parameters(self, parameters: Dict[str, Any]):
@@ -68,6 +73,8 @@ class BaseJobManager(ABC):
         self.previous_apply_number = self._check_the_previous_apply_number()
         self.success_applies_num = self.previous_apply_number
         self.total_applies_num = self.cache.total_applies_num
+        # ===== NEW: set the disable flag from config =====
+        self.disable_recommendations = DISABLE_RESUME_RECOMMENDATIONS
         logger.info("Parameters successfully set")
 
     def set_answerer_and_agent(self, llm_answerer_component: Any, llm_agent_component: Any):
@@ -117,6 +124,15 @@ class BaseJobManager(ABC):
             if cleaned:
                 processed_skills.append(cleaned)
         return processed_skills
+
+    # ----- NEW: Suitability check based on score -----
+    def _is_job_suitable(self, score: int, job: Job) -> bool:
+        """Check if the job meets the minimum interest score and other filters."""
+        if score < MIN_INTEREST_SCORE:
+            logger.info(f"Job '{job.job_title}' at {job.company_name} scored {score} < {MIN_INTEREST_SCORE} – skipping.")
+            return False
+        # Additional filters can go here
+        return True
 
     def _save_company(
         self,
@@ -334,8 +350,13 @@ class BaseJobManager(ABC):
                         return True, "The vacancy has already been encountered"
         return False, ""
 
+    # --------------------------------------------------------------
+    # MODIFIED: Failed jobs are NOT considered "seen" – they can be retried
+    # --------------------------------------------------------------
     def _job_is_already_seen(self, job: Job) -> Tuple[bool, str]:
-        """Check if we have already applied to this vacancy"""
+        """Check if we have already applied to this vacancy.
+        Only success and skipped jobs are considered seen – failed jobs are retried.
+        """
         company_name = job.company_name
         job_title = job.job_title
         if COLLECT_INFO_MODE is True:
@@ -345,11 +366,8 @@ class BaseJobManager(ABC):
                     logger.warning("The vacancy has already been encountered, skipping")
                     return True, "The vacancy has already been encountered"
         else:
-            for companies in (
-                self.success_companies,
-                self.skipped_companies,
-                self.failed_companies,
-            ):
+            # Only check success and skipped – failed jobs are retried
+            for companies in (self.success_companies, self.skipped_companies):
                 is_seen, reason = self._match_seen_jobs(job, companies)
                 if is_seen:
                     return True, reason
@@ -391,8 +409,17 @@ class BaseJobManager(ABC):
         )
         self.jobs_no_info.append(job_info.model_dump())
 
+    # ============================================================
+    # 🔧 MODIFIED: Skip resume recommendations if flag is set
+    # ============================================================
     def resume_improvement_recommendations(self) -> None:
-        """Generate LLM resume improvement advice and save to resume_recommendations.txt"""
+        """Generate LLM resume improvement advice and save to resume_recommendations.txt.
+        This can be disabled by setting DISABLE_RESUME_RECOMMENDATIONS = True in app_config.
+        """
+        if getattr(self, 'disable_recommendations', False):
+            logger.info("Resume improvement recommendations disabled (DISABLE_RESUME_RECOMMENDATIONS=True)")
+            return
+
         resume_recommendations_file = self._define_output_file("resume_recommendations.txt")
         try:
             with open(resume_recommendations_file, "r", encoding="utf-8") as f:

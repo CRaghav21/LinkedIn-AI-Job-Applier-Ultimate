@@ -8,7 +8,7 @@ from playwright.sync_api import Page
 
 from config.app_config import (
     COLLECT_INFO_MODE,
-    EASY_APPLY_ONLY_MODE,
+    EASY_APPLY_ONLY,
     MAX_APPLIES_NUM,
     MINIMUM_WAIT_TIME_SEC,
     MONKEY_MODE,
@@ -31,11 +31,27 @@ from src.utils.utils import async_pause, load_yaml_file, sanitize_text
 search_config = load_yaml_file(SEARCH_CONFIG_FILE)
 logger.info(f"Maximum allowed number of applications: {MAX_APPLIES_NUM}")
 
+# ============================================================
+# CORRECTED SELECTORS (fallback becomes primary)
+# ============================================================
+# Primary: the selectors that actually work on the current Indeed page
 INDEED_JOB_CARD_SELECTOR = "div.job_seen_beacon, div[data-testid='jobcard-wrapper']"
-INDEED_JOB_TITLE_SELECTOR = "h2.jobTitle a, [data-testid='jobTitle'] a"
-INDEED_COMPANY_SELECTOR = "[data-testid='company-name'], .companyName"
-INDEED_LOCATION_SELECTOR = "[data-testid='text-location'], .companyLocation"
+# Fallback: the data-jk selector (may be used if the above fails)
+INDEED_JOB_CARD_SELECTOR_FALLBACK = "div[data-jk]"
+
+# Job title: look for <a> with data-jk or .jobTitle
+INDEED_JOB_TITLE_SELECTOR = "a[data-jk], a.jobTitle, h2.jobTitle a, [data-testid='jobTitle'] a"
+
+# Company name
+INDEED_COMPANY_SELECTOR = "span[data-testid='company-name'], div.companyName, [data-testid='company-name']"
+
+# Location
+INDEED_LOCATION_SELECTOR = "span[data-testid='text-location'], .companyLocation"
+
+# Easy Apply badge
 INDEED_EASY_APPLY_BADGE = "span.iaLabel, [data-testid='ia-badge']"
+
+# Apply button selectors
 INDEED_APPLY_BUTTON = (
     "span.indeed-apply-status-not-applied button, "
     "button[aria-label*='Apply with Indeed'], "
@@ -44,6 +60,8 @@ INDEED_APPLY_BUTTON = (
     "[data-testid='indeedApplyButton-test'], "
     ".jobsearch-IndeedApplyButton-buttonWrapper"
 )
+
+# Next page button
 INDEED_NEXT_PAGE_SELECTOR = (
     "a[data-testid='pagination-page-next'], nav[role='navigation'] a[aria-label='Next Page']"
 )
@@ -57,7 +75,7 @@ class IndeedJobManager(BaseJobManager):
     ):
         logger.info("Initializing IndeedJobManager")
         self.page = page
-        self.email = linkedin_email  # reuses the same parameter name for interface compatibility
+        self.email = linkedin_email  # interface compatibility
         self.resume_anonymizer = resume_anonymizer
         self.search_component = search_component
         self.llm_answerer_component = None
@@ -76,7 +94,20 @@ class IndeedJobManager(BaseJobManager):
         self.resume_recommendations = ""
         self.submitted_resume_path = None
 
+        # Ensure Indeed uses its own output folder
+        self.OUTPUT_DIR = OUTPUT_DIR_INDEED
+
         logger.info("IndeedJobManager successfully initialized")
+
+    # --------------------------------------------------------------
+    # Override output file method to use Indeed directory
+    # --------------------------------------------------------------
+    def _define_output_file(self, filename: str) -> Path:
+        """Override to use Indeed output directory."""
+        output_file = Path(OUTPUT_DIR_INDEED) / filename
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"The path to the output file has been defined: {output_file}")
+        return output_file
 
     # ------------------------------------------------------------------
     # Interface methods (same signatures as LinkedIn LinkedInJobManager)
@@ -91,33 +122,25 @@ class IndeedJobManager(BaseJobManager):
         # define the start time of the search
         if self.cache.last_run:
             last_run = self.cache.get_last_run_datetime()
-            # if this is not the first launch - increase the time of the last search by 24 hours
-            # and write it as the last search (to avoid the drift of the start time of the program)
             self.cache.last_run = (last_run + timedelta(hours=24)).isoformat()
         else:
             self.cache.update_last_run()
         result = ""
-        # write recommendations for improving the resume
         self.resume_improvement_recommendations()
 
-        # for url in search_urls:
         self.page_num = 0
         await async_pause(1, 2)
 
-        # continue until the maximum number of applications is reached
         while self.success_applies_num < self.max_applies_num and self.applies_num < 400:
-            # Check if execution is paused
             if self.pause_checker:
                 await self.pause_checker()
 
-            # go through all pages until they are finished
             vacancies = await self.get_vacancies_from_page()
             if len(vacancies) == 0:
                 if self.page_num == 0:
                     logger.warning("No vacancies found for the search query")
                 break
             for vacancy in vacancies:
-                # Check if execution is paused before processing each job
                 if self.pause_checker:
                     await self.pause_checker()
 
@@ -132,8 +155,6 @@ class IndeedJobManager(BaseJobManager):
                     tb_str = traceback.format_exc()
                     logger.error(f"Unknown error on the page: {self.page.url}\n{tb_str}")
                     await debug_capture(self.page, "apply_loop_error")
-                    # counter of repeated errors, if too many errors in a row -
-                    # exit the program and send a notification
                     if self.error_num == MAX_APPLIES_NUM:
                         logger.error(f"Critical number of consecutive errors {MAX_APPLIES_NUM}")
                         result = "Error"
@@ -143,15 +164,11 @@ class IndeedJobManager(BaseJobManager):
                     continue
                 else:
                     self.error_num = 0
-            # break the search for vacancies if the limit is reached
+
             if result == "Limit" or result == "Error":
                 break
-            # go to the next page; stop if there are no more pages
             if not await self._go_to_next_page():
                 break
-
-        # if result == "Limit" or result == "Error":
-        #     break
 
         logger.info(f"Applications sent: {self.success_applies_num}")
         logger.info("Ending the work.")
@@ -160,24 +177,35 @@ class IndeedJobManager(BaseJobManager):
     async def get_vacancies_from_page(self) -> List[Any]:
         """Return all job card elements on the current page"""
         try:
-            await self.page.wait_for_selector(INDEED_JOB_CARD_SELECTOR, timeout=15000)
+            # Try primary selector first (the one that actually works)
+            try:
+                await self.page.wait_for_selector(INDEED_JOB_CARD_SELECTOR, timeout=10000)
+                selector_to_use = INDEED_JOB_CARD_SELECTOR
+            except Exception:
+                logger.debug("Primary job card selector not found, trying fallback.")
+                await self.page.wait_for_selector(INDEED_JOB_CARD_SELECTOR_FALLBACK, timeout=5000)
+                selector_to_use = INDEED_JOB_CARD_SELECTOR_FALLBACK
+
             await self._scroll_left_panel()
-            cards = await find_elements_safely(self.page, INDEED_JOB_CARD_SELECTOR)
+            cards = await find_elements_safely(self.page, selector_to_use)
             if not cards:
                 return []
-            # Indeed's slider DOM can render multiple div.job_seen_beacon elements for
-            # the same job (compact card + pre-fetched detail view). Deduplicate by
-            # data-jk so each job is only processed once.
+
+            # Deduplicate by data-jk (if available)
             seen_jks: set = set()
             unique_cards = []
             for card in cards:
-                title_el = await find_element_safely(card, INDEED_JOB_TITLE_SELECTOR, timeout=500)
-                jk = (await title_el.get_attribute("data-jk") or "") if title_el else ""
+                # Try to get data-jk from card or from title link inside it
+                jk = await card.get_attribute("data-jk")
+                if not jk:
+                    title_el = await find_element_safely(card, INDEED_JOB_TITLE_SELECTOR, timeout=500)
+                    jk = (await title_el.get_attribute("data-jk") or "") if title_el else ""
                 if jk:
                     if jk in seen_jks:
                         continue
                     seen_jks.add(jk)
                 unique_cards.append(card)
+
             self.total_discovered_jobs += len(unique_cards)
             emit_event(
                 "jobs_discovered",
@@ -235,7 +263,7 @@ class IndeedJobManager(BaseJobManager):
             )
             return "Skip"
 
-        if job.apply_method != "easy_apply" and EASY_APPLY_ONLY_MODE and not COLLECT_INFO_MODE:
+        if job.apply_method != "easy_apply" and EASY_APPLY_ONLY and not COLLECT_INFO_MODE:
             logger.info(f"Skipping external apply job: {job.job_title} at {job.company_name}")
             await self._handle_apply_result(
                 ("Skip", "External apply not allowed"), job, evaluation=evaluation
@@ -253,9 +281,7 @@ class IndeedJobManager(BaseJobManager):
             if MONKEY_MODE is True and COLLECT_INFO_MODE is False:
                 job_is_interesting = True
                 score, reasoning = 0, "Monkey mode"
-                logger.info(
-                    "Monkey mode is enabled and Collect info mode is disabled, applying to all vacancies"
-                )
+                logger.info("Monkey mode: applying to all vacancies")
             else:
                 interest_result = self.llm_answerer_component.job_is_interesting(job.model_dump())
                 if interest_result is None:
@@ -271,33 +297,33 @@ class IndeedJobManager(BaseJobManager):
                 logger.info(f"Skipping uninteresting job: {job.job_title} at {job.company_name}")
                 await self._handle_apply_result(("Skip", reasoning), job, evaluation=evaluation)
                 return "Skip"
-            # update the list of required skills for the vacancy and save job info to file
-            # only if the vacancy was scored and considered interesting
+
             if int(score) > 0:
-                # extract skills from the vacancy
                 job.skills = self._extract_skills_from_vacancy(job)
                 self._update_skill_stat(self.job_key_skills)
                 evaluation["skills"] = self.job_key_skills
-                # set the vacancy to answerer
                 if COLLECT_INFO_MODE is True:
                     self._save_interesting_job(job, score, reasoning)
 
             if COLLECT_INFO_MODE:
-                logger.info(
-                    "We are in the mode of collecting skill statistics or searching for "
-                    "interesting jobs - do not apply to the vacancy"
-                )
+                logger.info("Collect info mode: not applying")
                 return "Ok"
 
             self.llm_answerer_component.set_job(job.model_dump())
             self.submitted_resume_path = None
 
-            if not EASY_APPLY_ONLY_MODE and job.apply_method == "external":
+            if not EASY_APPLY_ONLY and job.apply_method == "external":
                 if TEST_MODE:
-                    apply_result = "Skip", "Test mode"
+                    apply_result = ("Skip", "Test mode")
                 else:
                     apply_url = await self._get_button_link(new_page)
-                    apply_result = await self.llm_agent_component.apply_to_job(apply_url)
+                    # --- FIX: Pass job details to apply_to_job for custom resume generation ---
+                    apply_result = await self.llm_agent_component.apply_to_job(
+                        apply_url,
+                        job.job_description,
+                        job.job_title,
+                        job.company_name
+                    )
             else:
                 apply_result = await self.easy_apply(job, new_page)
 
@@ -308,15 +334,10 @@ class IndeedJobManager(BaseJobManager):
                 self._collect_job_info(job.job_title, job.company_name, job.url, reason)
             await self._handle_apply_result(apply_result, job, evaluation=evaluation)
             if self.success_applies_num >= self.max_applies_num:
-                logger.info(
-                    f"The maximum number of applications has been reached: "
-                    f"{self.success_applies_num}/{self.max_applies_num}"
-                )
+                logger.info(f"Reached maximum applications: {self.success_applies_num}/{self.max_applies_num}")
                 return "Limit"
             return result
         finally:
-            # if the page was processed faster than the minimum time -
-            # wait until this time is over
             time_left = int(minimum_job_time - time.time())
             if time_left > 0:
                 await async_pause(time_left, time_left + 1)
@@ -344,54 +365,52 @@ class IndeedJobManager(BaseJobManager):
     # ------------------------------------------------------------------
 
     async def _extract_job_from_card(self, card: Any) -> Job | None:
-        """Extract job data from an Indeed job card element"""
+        """Extract job data from an Indeed job card element."""
         try:
+            # Find the title link
             title_el = await find_element_safely(card, INDEED_JOB_TITLE_SELECTOR, timeout=3000)
             if not title_el:
+                # Try to get any link with data-jk
+                title_el = await find_element_safely(card, "a[data-jk]", timeout=1000)
+            if not title_el:
+                logger.debug("No title element found in card")
                 return None
+
             title = await title_el.text_content() or ""
             jk = await title_el.get_attribute("data-jk") or ""
-            if "0123456789abcdef" in "".join(sorted(jk)):
+
+            # ACCEPT ANY NON-EMPTY jk – Indeed uses hex strings
+            if not jk:
+                logger.debug("No data-jk found, skipping card")
                 return None
-            if jk:
-                # Use the canonical viewjob URL so the same job always maps to the
-                # same URL regardless of which slider item or tracking URL was found.
-                job_url = f"https://www.indeed.com/viewjob?jk={jk}"
-            else:
-                job_url_path = await title_el.get_attribute("href") or ""
-                job_url = (
-                    job_url_path
-                    if job_url_path.startswith("http")
-                    else f"https://www.indeed.com{job_url_path}"
-                )
 
-            company_el = await find_element_safely(card, INDEED_COMPANY_SELECTOR, timeout=3000)
-            company = (await company_el.text_content() or "") if company_el else ""
+            # Build canonical URL using jk
+            job_url = f"https://uk.indeed.com/viewjob?jk={jk}"
 
-            location_el = await find_element_safely(card, INDEED_LOCATION_SELECTOR, timeout=3000)
-            location = (await location_el.text_content() or "") if location_el else ""
+            # Company
+            company_el = await find_element_safely(card, INDEED_COMPANY_SELECTOR, timeout=1000)
+            company = (await company_el.text_content() or "").strip() if company_el else ""
 
-            logger.debug(
-                f"Extracting job card: title={title!r}, company={company!r}, url={job_url!r}"
-            )
+            # Location
+            location_el = await find_element_safely(card, INDEED_LOCATION_SELECTOR, timeout=1000)
+            location = (await location_el.text_content() or "").strip() if location_el else ""
 
-            # Check for easy apply badge on card first
-            easy_apply_badge = await find_element_safely(
-                card, INDEED_EASY_APPLY_BADGE, timeout=1000
-            )
+            # Check for Easy Apply badge on card
+            easy_apply_badge = await find_element_safely(card, INDEED_EASY_APPLY_BADGE, timeout=1000)
             if easy_apply_badge:
                 apply_method = "easy_apply"
             else:
-                # Click the card to open detail panel and check for apply button.
-                # After a previous card is opened the DOM shifts and Playwright's
-                # visibility checks fail. Use JS directly to bypass them.
-                await card.evaluate("el => el.scrollIntoView({block: 'center'})")
-                await title_el.evaluate("el => el.click()")
-                await async_pause(0.5, 1)
-                apply_button = await find_element_safely(
-                    self.page, INDEED_APPLY_BUTTON, timeout=6000
-                )
-                apply_method = "easy_apply" if apply_button else "external"
+                # Click the card to open detail panel and look for apply button
+                try:
+                    await card.evaluate("el => el.scrollIntoView({block: 'center'})")
+                    await title_el.evaluate("el => el.click()")
+                    await async_pause(0.5, 1)
+                    apply_button = await find_element_safely(
+                        self.page, INDEED_APPLY_BUTTON, timeout=3000
+                    )
+                    apply_method = "easy_apply" if apply_button else "external"
+                except Exception:
+                    apply_method = "external"
 
             job = Job(
                 job_title=sanitize_text(title),
@@ -400,31 +419,30 @@ class IndeedJobManager(BaseJobManager):
                 url=job_url,
                 apply_method=apply_method,
             )
+            logger.debug(f"Extracted job: {job.job_title} at {job.company_name} ({job.apply_method})")
             return job
 
         except Exception as e:
-            logger.warning(
-                f"Failed to extract job from card: title={title!r}, company={company!r}, url={job_url!r} — {e}"
-                if "title" in dir()
-                else f"Failed to extract job from card (title not yet parsed): {e}"
-            )
+            logger.warning(f"Failed to extract job from card: {e}")
             await debug_capture(self.page, "extract_job_error")
             return None
 
     async def _extract_job_description_from_page(self, page: Any) -> str:
-        """Extract job description text from an Indeed job detail page"""
+        """Extract job description text from an Indeed job detail page."""
         selectors = [
             "#jobDescriptionText",
             "[data-testid='jobsearch-jobDescriptionText']",
             ".jobsearch-jobDescriptionText",
             "#job-description",
+            "[data-testid='jobsearch-JobDescription']",
+            "div.jobsearch-jobDescriptionText",
         ]
         for selector in selectors:
             try:
                 el = await find_element_safely(page, selector, timeout=3000)
                 if el:
                     text = await el.text_content()
-                    if text:
+                    if text and len(text.strip()) > 10:
                         return text.strip()
             except Exception:
                 continue
@@ -432,23 +450,22 @@ class IndeedJobManager(BaseJobManager):
         return ""
 
     async def _extract_company_description(self, page: Any) -> str:
-        """Extract company description from the 'About the company' section of an Indeed job page"""
+        """Extract company description from the 'About the company' section."""
         selectors = [
             "[data-testid='jobsearch-CompanyInfoContainer']",
             "#companyInfo",
             ".jobsearch-CompanyInfoWithoutHeaderImage",
             ".jobsearch-CompanyInfoContainer",
+            "div[data-testid='company-description']",
         ]
         for selector in selectors:
             try:
                 el = await find_element_safely(page, selector, timeout=2000)
                 if el:
                     text = await el.text_content()
-                    if text:
-                        text = text.strip()
-                        if len(text) > 20:
-                            logger.debug(f"Found company description using selector: {selector}")
-                            return text
+                    if text and len(text.strip()) > 20:
+                        logger.debug(f"Found company description using selector: {selector}")
+                        return text.strip()
             except Exception:
                 continue
         logger.debug("Could not extract company description from Indeed page")
@@ -461,6 +478,7 @@ class IndeedJobManager(BaseJobManager):
             "a[aria-label*='Apply on']",
             ".ia-BasePage-applyButton",
             "a[data-jk][href*='apply']",
+            "a[href*='indeedapply']",
         ]
         for selector in apply_selectors:
             try:
@@ -483,7 +501,7 @@ class IndeedJobManager(BaseJobManager):
         return ""
 
     async def _dismiss_overlays(self) -> None:
-        """Dismiss Indeed overlay portals that intercept clicks"""
+        """Dismiss Indeed overlay portals that intercept clicks."""
         for selector in ["ifl-portal", "div.gnav-hovbc7"]:
             try:
                 count = await self.page.locator(selector).count()

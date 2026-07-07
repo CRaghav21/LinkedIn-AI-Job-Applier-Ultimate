@@ -25,6 +25,21 @@ except ImportError:
 # Import browser configuration
 from config.logger_config import logger
 
+# ===== NEW: Skip validation & use constants to fill missing fields =====
+# Set this to True to skip all validation prompts and auto-fill from constants
+SKIP_VALIDATION = True  # Change to False if you ever want prompts again
+
+# Import constants (adjust import path to your constants file)
+try:
+    from config.constants import (
+        NAME, EMAIL, PHONE, EXPERIENCE, EDUCATION, SKILLS,
+        PROJECTS, CERTIFICATIONS, LANGUAGES, SUMMARY
+    )
+    CONSTANTS_AVAILABLE = True
+except ImportError:
+    CONSTANTS_AVAILABLE = False
+    logger.warning("Constants module not found; auto-fill will be disabled.")
+
 
 class ConfigError(Exception):
     pass
@@ -245,20 +260,106 @@ def get_user_choice_with_timeout(timeout_seconds: int = 30) -> str:
     return result["choice"]
 
 
+# ===== NEW: Auto-fill missing fields from constants =====
+def fill_missing_fields_from_constants(structured_resume: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively fill missing fields in structured_resume with values from constants.
+    Skips fields that already have valid content.
+    Returns the updated resume (modifies in place and returns it).
+    """
+    if not CONSTANTS_AVAILABLE:
+        logger.warning("Constants not available, cannot auto-fill.")
+        return structured_resume
+
+    # Map constant names to the path in resume (using dot notation)
+    # We assume structured_resume has keys like 'personal_information', 'experience_details', etc.
+    # Adjust the mapping according to your actual resume structure.
+    mapping = {
+        "personal_information.name": NAME,
+        "personal_information.email": EMAIL,
+        "personal_information.phone": PHONE,
+        "personal_information.summary": SUMMARY if 'SUMMARY' in dir() else None,
+        "skills": SKILLS,
+        "experience_details": EXPERIENCE,   # list of dicts
+        "education_details": EDUCATION,
+        "projects": PROJECTS if 'PROJECTS' in dir() else None,
+        "certifications": CERTIFICATIONS if 'CERTIFICATIONS' in dir() else None,
+        "languages": LANGUAGES if 'LANGUAGES' in dir() else None,
+    }
+
+    def set_value(obj: Any, path: str, value: Any) -> None:
+        """Navigate to the leaf of the path and set value if current is missing/placeholder."""
+        parts = path.split(".")
+        current = obj
+        for i, part in enumerate(parts[:-1]):
+            if part.isdigit():
+                idx = int(part)
+                # Ensure list exists
+                if not isinstance(current, list) or len(current) <= idx:
+                    # Extend list if needed
+                    while len(current) <= idx:
+                        current.append({})
+                current = current[idx]
+            else:
+                if isinstance(current, dict):
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                else:
+                    # Can't navigate further, abort
+                    return
+        # Now set the leaf
+        leaf = parts[-1]
+        if leaf.isdigit():
+            idx = int(leaf)
+            if not isinstance(current, list) or len(current) <= idx:
+                while len(current) <= idx:
+                    current.append(None)
+            # Check if current value is missing/placeholder
+            if current[idx] is None or (isinstance(current[idx], str) and (current[idx].strip() in ["", "No info"] or (current[idx].startswith("[") and current[idx].endswith("]")))):
+                current[idx] = value
+        else:
+            if isinstance(current, dict):
+                existing = current.get(leaf)
+                if existing is None or (isinstance(existing, str) and (existing.strip() in ["", "No info"] or (existing.startswith("[") and existing.endswith("]")))):
+                    current[leaf] = value
+            else:
+                # Not a dict, can't set
+                pass
+
+    # Apply mapping
+    for path, const_value in mapping.items():
+        if const_value is None:
+            continue
+        # Skip if value is empty list or dict? We'll still set if missing
+        set_value(structured_resume, path, const_value)
+
+    logger.info("Auto-filled missing fields from constants.")
+    return structured_resume
+
+
 def validate_and_prompt_resume_completion(
     structured_resume: Dict[str, Any], structured_resume_file: Path, resume_text_file: Path
 ) -> bool:
     """
     Validate structured resume fields and prompt user to complete missing information.
-
-    Args:
-        structured_resume: Dictionary containing structured resume data
-        structured_resume_file: Path to structured resume YAML file
-        resume_text_file: Path to resume text file
-
-    Returns:
-        True if user chooses to continue, False if user chooses to exit
+    If SKIP_VALIDATION is True, we skip prompts and auto-fill from constants if possible.
     """
+    # ===== NEW: Skip validation entirely =====
+    if SKIP_VALIDATION:
+        logger.info("Validation skipped per SKIP_VALIDATION flag.")
+        # Optionally auto-fill missing fields from constants
+        if CONSTANTS_AVAILABLE:
+            logger.info("Attempting to auto-fill missing fields from constants...")
+            fill_missing_fields_from_constants(structured_resume)
+            # Save updated resume back to file
+            save_yaml_file(structured_resume_file, structured_resume)
+            logger.info(f"Auto-filled resume saved to {structured_resume_file}")
+        else:
+            logger.warning("Constants not available; fields may remain missing.")
+        return True  # Always continue
+
+    # Original validation logic (kept for backward compatibility if SKIP_VALIDATION=False)
     logger.info("Validating structured resume fields...")
 
     missing_fields = validate_structured_resume_fields(structured_resume)

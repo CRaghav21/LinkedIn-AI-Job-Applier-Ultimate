@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import textwrap
 import threading
 import time
@@ -37,6 +38,9 @@ from src.pydantic_models.prompt_models import LinkedInMessageClassification, Res
 from src.utils.json_to_readable import transform_search_config_data, transform_vacancy_data
 from src.utils.utils import append_yaml_file, pause
 
+# ===== IMPORT THE COMPREHENSIVE PROFILE =====
+from config.profile import PROFILE
+
 load_dotenv()
 
 
@@ -47,13 +51,10 @@ class AIModel(ABC):
 
 
 class GeminiModel(AIModel):
-    """Get access to Gemini model"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from google.genai import types
         from langchain_google_genai import ChatGoogleGenerativeAI, HarmBlockThreshold, HarmCategory
 
-        # os.environ["https_proxy"] = llm_proxy
         http_options = types.HttpOptions(
             client_args={"proxy": llm_proxy}, async_client_args={"proxy": llm_proxy}
         )
@@ -75,14 +76,11 @@ class GeminiModel(AIModel):
     def invoke(self, prompt: ChatPromptTemplate) -> BaseMessage:
         logger.info("Got access to model via Gemini API")
         prompt_messages = [SystemMessage(content=prompts.custom_instructions)] + prompt.messages
-        # randomly select one proxy after another until LLM request succeeds
         response = self.model.invoke(prompt_messages)
         return response
 
 
 class OpenAIModel(AIModel):
-    """Get access to OpenAI model"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from langchain_openai import ChatOpenAI
 
@@ -119,8 +117,6 @@ class OpenAIModel(AIModel):
 
 
 class ClaudeModel(AIModel):
-    """Get access to Claude model"""
-
     def __init__(self, api_key: str, llm_model: str) -> None:
         from langchain_anthropic import ChatAnthropic
 
@@ -133,8 +129,6 @@ class ClaudeModel(AIModel):
 
 
 class OllamaModel(AIModel):
-    """Get access to Ollama model"""
-
     def __init__(self, llm_model: str, llm_api_url: str) -> None:
         from langchain_ollama import ChatOllama
 
@@ -151,8 +145,6 @@ class OllamaModel(AIModel):
 
 
 class OpenRouterModel(AIModel):
-    """Get access to models via OpenRouter API"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from langchain_openai import ChatOpenAI
 
@@ -176,8 +168,6 @@ class OpenRouterModel(AIModel):
 
 
 class NvidiaNimModel(AIModel):
-    """Get access to models via NVIDIA NIM API (OpenAI-compatible endpoint)"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from langchain_openai import ChatOpenAI
 
@@ -201,8 +191,6 @@ class NvidiaNimModel(AIModel):
 
 
 class GroqModel(AIModel):
-    """Get access to models via Groq API (OpenAI-compatible endpoint)"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from langchain_openai import ChatOpenAI
 
@@ -226,8 +214,6 @@ class GroqModel(AIModel):
 
 
 class CerebrasModel(AIModel):
-    """Get access to models via Cerebras API (OpenAI-compatible endpoint)"""
-
     def __init__(self, api_key: str, llm_model: str, llm_proxy: str = None) -> None:
         from langchain_openai import ChatOpenAI
 
@@ -250,40 +236,7 @@ class CerebrasModel(AIModel):
         return response
 
 
-# class xAIModel(AIModel):
-#     """Get access to xAI model"""
-
-#     def __init__(self, api_key: str, llm_model: str) -> None:
-#         from langchain_xai import ChatXAI
-
-#         self.model = ChatXAI(model=llm_model, xai_api_key=api_key)
-
-#     def invoke(self, prompt: str) -> BaseMessage:
-#         response = self.model.invoke(prompt)
-#         logger.debug("Successfully got access to model via Ollama API")
-#         return response
-
-
-# class HuggingFaceModel(AIModel):
-#     """Get access to Hugging Face model"""
-
-#     def __init__(self, api_key: str, llm_model: str) -> None:
-#         from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-
-#         self.model = HuggingFaceEndpoint(
-#             repo_id=llm_model, huggingfacehub_api_token=api_key, temperature=TEMPERATURE
-#         )
-#         self.chatmodel = ChatHuggingFace(llm=self.model)
-
-#     def invoke(self, prompt: str) -> BaseMessage:
-#         response = self.chatmodel.invoke(prompt)
-#         logger.debug("Successfully got access to model via Hugging Face API")
-#         return response
-
-
 class AIAdapter:
-    """Class for accessing LLM models from different companies via API"""
-
     def __init__(self, api_key: str = None, llm_proxy: str = None, llm_api_url: str = None):
         self.model_type = LLM_MODEL_TYPE
         self.easy_apply_model = EASY_APPLY_MODEL
@@ -294,7 +247,6 @@ class AIAdapter:
 
     def _create_model(self, api_key: str, llm_proxy: str, llm_api_url: str) -> AIModel:
         logger.info(f"Using {self.model_type} from {self.easy_apply_model}")
-
         if self.model_type == "gemini":
             if not api_key:
                 raise ValueError("API key is required for Gemini model")
@@ -323,17 +275,11 @@ class AIAdapter:
             if not api_key:
                 raise ValueError("API key is required for Cerebras model")
             return CerebrasModel(api_key, self.easy_apply_model, llm_proxy)
-        # elif self.model_type == "xai":
-        #     return xAIModel(api_key, self.easy_apply_model)
-        # elif self.model_type == "huggingface":
-        #     return HuggingFaceModel(api_key, self.easy_apply_model)
         else:
             raise ValueError(f"Unsupported model type: {LLM_MODEL_TYPE}")
 
     def invoke(self, prompt: str) -> str:
         if self.free_tier:
-            # if free tier mode is activated and current model RPM is greater than the limit,
-            # wait for the specified time before invoking the model to avoid rate limit errors
             if len(self.free_tier_request_queue) >= self.free_tier_rpm_limit:
                 first_request_timestamp = self.free_tier_request_queue.popleft()
                 time_delta = datetime.now() - first_request_timestamp
@@ -344,8 +290,6 @@ class AIAdapter:
 
 
 class LLMLogger:
-    """Class for logging all events that occur when working with LLM"""
-
     def __init__(self):
         self.calls_log = os.path.join(Path(LOG_DIR), "llm_api_calls.yaml")
         logger.info("LLMLogger successfully initialized")
@@ -357,7 +301,6 @@ class LLMLogger:
         response_time_seconds: float = 0.0,
         context: Dict[str, str] | None = None,
     ) -> None:
-        """Method for logging all LLM operations"""
         logger.debug("Starting execution of log_request method")
         logger.debug("Prompts received")
         logger.debug("Parsed response received")
@@ -444,18 +387,11 @@ class LLMLogger:
             logger.error(f"Error creating log entry: missing key {str(e)} in parsed_reply")
             raise
 
-        # Append the log entry to the call log file
         append_yaml_file(Path(self.calls_log), log_entry.model_dump())
         logger.info(f"LLM call log entry appended to {self.calls_log}")
 
 
 class LoggerChatModel:
-    """
-    Class for interacting with language model (LLM) and logging all operations.
-    This class processes requests to the language model, parses and logs responses, and handles
-    possible errors such as rate limit exceeded or network errors.
-    """
-
     def __init__(self, llm: GeminiModel, context_provider=None, call_listener=None):
         self.llm = llm
         self.llm_logger = LLMLogger()
@@ -464,10 +400,6 @@ class LoggerChatModel:
         logger.info(f"LoggerChatModel successfully initialized, LLM: {llm}")
 
     def __call__(self, messages: List[Dict[str, str]]) -> str:
-        """
-        Execute LLM call, process response and log the entire process.
-        """
-        # logger.debug(f"Entering __call__ method with messages: {messages}")
         while True:
             try:
                 logger.info("Attempting LLM call")
@@ -528,9 +460,7 @@ class LoggerChatModel:
                     pause(30, 31)
 
     def parse_llmresult(self, llmresult: AIMessage) -> Dict[str, Dict]:
-        """Parse LLM result"""
         logger.info("Parsing LLM result")
-
         try:
             if hasattr(llmresult, "usage_metadata") and llmresult.usage_metadata is not None:
                 content = llmresult.content
@@ -559,14 +489,12 @@ class LoggerChatModel:
                     response_metadata = llmresult.response_metadata
                     id_ = llmresult.id
 
-                    # Handle the case where token_usage might not be in response_metadata
                     if "token_usage" in response_metadata:
                         token_usage = response_metadata["token_usage"]
                         input_tokens = token_usage.prompt_tokens
                         output_tokens = token_usage.completion_tokens
                         total_tokens = token_usage.total_tokens
                     else:
-                        # Default values when token_usage is not available
                         input_tokens = 0
                         output_tokens = 0
                         total_tokens = 0
@@ -587,7 +515,6 @@ class LoggerChatModel:
                 except Exception:
                     tb_str = traceback.format_exc()
                     logger.error(f"Error processing result without usage_metadata: {tb_str}")
-                    # Create a minimal parsed result with defaults
                     parsed_result = {
                         "content": llmresult.content if hasattr(llmresult, "content") else "",
                         "response_metadata": {"model_name": "unknown", "finish_reason": "unknown"},
@@ -603,7 +530,6 @@ class LoggerChatModel:
         except KeyError as e:
             logger.error(f"KeyError when parsing LLM result: missing key {str(e)}")
             raise
-
         except Exception:
             tb_str = traceback.format_exc()
             logger.error(f"Unexpected error when parsing LLM result: {tb_str}")
@@ -611,14 +537,6 @@ class LoggerChatModel:
 
 
 class GPTAnswerer:
-    """
-    Class for processing resume questions and generating answers using LLM.
-    The class includes methods for processing and determining resume sections such as
-    personal information, work experience, etc., based on provided questions.
-    Designed for automating resume question responses,
-    as well as writing cover letters.
-    """
-
     def __init__(self, llm_api_key: str = None, llm_proxy: str = None, llm_api_url: str = None):
         self.job = None
         self.job_readable = ""
@@ -666,12 +584,70 @@ class GPTAnswerer:
             "generate_resume_text": self._create_chain(prompts.generate_resume_text_template),
         }
 
+    # ================================================================
+    # CANDIDATE PROFILE CONTEXT (NEW)
+    # ================================================================
+    def get_candidate_context(self) -> str:
+        """
+        Return a structured summary of the candidate's profile for LLM prompt injection.
+        This includes personal details, work authorization, availability, salary expectations, etc.
+        """
+        p = PROFILE
+        personal = p.get("personal", {})
+        status = p.get("status", {})
+        education = p.get("education", [])
+        skills = p.get("skills", {})
+        common = p.get("common_answers", {})
+        work_prefs = p.get("work_preferences", {})
+
+        context = f"""  
+    ## Candidate Profile (Structured Information)
+    - Full Name: {personal.get('full_name', '')}
+    - Email: {personal.get('email', '')}
+    - Phone: {personal.get('phone', '')}
+    - Location: {personal.get('location', '')}
+    - Nationality: {personal.get('nationality', '')}
+    - Gender: {personal.get('gender', '')}
+    - Pronouns: {personal.get('pronouns', '')}
+    - LinkedIn: {personal.get('linkedin', '')}
+    - GitHub: {personal.get('github', '')}
+
+    ## Work Authorization & Availability
+    - Current Status: {status.get('current_status', '')}
+    - Availability: {status.get('availability', '')}
+    - Visa Type: {status.get('visa_type', '')}
+    - Right to Work in UK: {status.get('right_to_work_uk', False)}
+    - Visa Sponsorship Required: {status.get('visa_sponsorship_required', False)}
+    - Future Authorization: {status.get('future_authorization', '')}
+    - Passport: {status.get('passport', '')}
+    - Driving Licence: {status.get('driving_licence', False)}
+    - Criminal Convictions: {status.get('criminal_convictions', False)}
+
+    ## Education
+    {', '.join([f"{e.get('degree', '')} ({e.get('institution', '')})" for e in education])}
+
+    ## Technical Skills
+    - Programming: {', '.join(skills.get('programming', []))}
+    - Data: {', '.join(skills.get('data', []))}
+    - Machine Learning: {', '.join(skills.get('machine_learning', []))}
+    - Software Engineering: {', '.join(skills.get('software_engineering', []))}
+
+    ## Languages
+    {', '.join(p.get('languages', []))}
+
+    ## Work Preferences
+    - Willing to relocate: {work_prefs.get('willing_to_relocate', True)}
+    - Willing to commute long distance: {work_prefs.get('willing_to_commute_long_distance', True)}
+    - Preferred work mode: {work_prefs.get('preferred_work_mode', 'any')}
+    - Default commute/relocation answer: {work_prefs.get('default_commute_answer', 'Yes')}
+
+    ## Salary Expectations (default)
+    {common.get('salary_single', '£45,000')}
+    """
+        return context
+
     @staticmethod
     def find_best_match(text: str, options: list[str]) -> str:
-        """
-        Find the best match for a string with one of the options
-        and return the best option from the list.
-        """
         if "no info" in text.lower():
             return "no info"
         if not options:
@@ -691,37 +667,25 @@ class GPTAnswerer:
 
     @staticmethod
     def _remove_placeholders(text: str) -> str:
-        """Remove all 'PLACEHOLDER' placeholders from text."""
         logger.debug("Removing placeholders from text")
         return text.replace("PLACEHOLDER", "").strip()
 
     @staticmethod
     def _preprocess_template_string(template: str) -> str:
-        """Transform template string for use in prompts."""
         logger.debug("Preprocessing template string")
         return textwrap.dedent(template)
 
     @staticmethod
     def _clean_html_response(html_response: str) -> str:
-        """Clean HTML response by removing markdown code block wrappers"""
-        # Remove markdown code block wrappers
         html_response = html_response.strip()
-
-        # Remove ```html at the beginning
         if html_response.startswith("```html"):
-            html_response = html_response[7:]  # Remove "```html"
-
-        # Remove ``` at the end
+            html_response = html_response[7:]
         if html_response.endswith("```"):
-            html_response = html_response[:-3]  # Remove "```"
-
-        # Remove any remaining ```html patterns that might be in the middle
+            html_response = html_response[:-3]
         html_response = html_response.replace("```html", "").replace("```", "")
-
         return html_response.strip()
 
     def set_resume(self, resume_structured: Dict[str, Any], resume_readable: str) -> None:
-        """Add resume for analysis."""
         logger.info("Adding resume")
         self.resume_structured = resume_structured
         if not self.resume_structured["personal_information"].get("phone_code"):
@@ -737,7 +701,6 @@ class GPTAnswerer:
         if not job:
             self.current_job_context = {"job_url": "", "job_title": "", "company_name": ""}
             return
-
         job_url = str(job.get("url") or "")
         self.current_job_context = {
             "job_url": job_url,
@@ -761,11 +724,9 @@ class GPTAnswerer:
         job_url = job_context.get("job_url", "")
         if not job_url:
             return
-
         with self._job_llm_lock:
             total_time = self.job_llm_time_seconds.get(job_url, 0.0) + response_time_seconds
             self.job_llm_time_seconds[job_url] = total_time
-
         emit_event(
             "llm_call_completed",
             f"LLM call completed for {job_context.get('job_title') or 'job'}",
@@ -785,7 +746,6 @@ class GPTAnswerer:
             return round(self.job_llm_time_seconds.get(job_url, 0.0), 3)
 
     def set_job(self, job: Dict[str, Any], is_test: bool = False) -> None:
-        """Add job description."""
         self.job = job
         self._set_current_job_context(job)
         text = transform_vacancy_data(job)
@@ -796,12 +756,10 @@ class GPTAnswerer:
         logger.info(f"Adding job description: {self.job_readable}")
 
     def set_search_parameters(self, parameters: dict) -> None:
-        """Set job search parameters."""
         logger.info(f"Setting job search parameters: {parameters}")
         self.search_parameters = transform_search_config_data(parameters)
 
     def _create_chain(self, template: str) -> ChatPromptTemplate:
-        """Create a chain for a specific resume section."""
         template = self._preprocess_template_string(template)
         prompt = ChatPromptTemplate.from_template(template)
         return prompt | self.llm_cheap | StrOutputParser()
@@ -809,7 +767,6 @@ class GPTAnswerer:
     def _create_pydantic_chain(
         self, template: str, pydantic_object: BaseModel
     ) -> Tuple[ChatPromptTemplate, PydanticOutputParser]:
-        """Create a chain for a specific resume section."""
         parser = PydanticOutputParser(pydantic_object=pydantic_object)
         template = self._preprocess_template_string(template)
         prompt = ChatPromptTemplate.from_template(template)
@@ -828,7 +785,6 @@ class GPTAnswerer:
             value = conversation.get(key)
             if value:
                 lines.append(f"{label}: {value}")
-
         messages = conversation.get("messages") or []
         if messages:
             lines.append("Messages:")
@@ -837,7 +793,6 @@ class GPTAnswerer:
                 timestamp = message.get("timestamp") or ""
                 body = message.get("body") or ""
                 lines.append(f"- {sender} [{timestamp}]: {body}")
-
         return "\n".join(lines) if lines else "No conversation details available."
 
     @staticmethod
@@ -851,11 +806,9 @@ class GPTAnswerer:
         preferences = preferences or {}
         if not preferences.get("old_message_apology_enabled", True):
             return ""
-
         timestamp_str = conversation.get("timestamp", "")
         if not timestamp_str:
             return ""
-
         months = {
             "jan": 1,
             "feb": 2,
@@ -873,25 +826,21 @@ class GPTAnswerer:
         parts = timestamp_str.strip().split()
         if len(parts) < 2:
             return ""
-
         month_part = parts[0].lower()[:3]
         day_part = parts[1].rstrip(",")
         if month_part not in months or not day_part.isdigit():
             return ""
-
         now = datetime.now()
         msg_month = months[month_part]
         msg_day = int(day_part)
         msg_year = now.year
         if msg_month > now.month:
             msg_year -= 1
-
         msg_date = datetime(msg_year, msg_month, msg_day)
         age_days = (now - msg_date).days
         threshold_days = max(int(preferences.get("old_message_threshold_days", 60)), 1)
         if age_days < threshold_days:
             return ""
-
         category = (classification or {}).get("category")
         apology_reason = (
             preferences.get("old_message_apology_reason")
@@ -911,11 +860,9 @@ class GPTAnswerer:
                 f"- This message was sent over {threshold_days} days ago. Start the reply with a brief, warm "
                 f"apology for the late response, explaining {apology_reason}.\n"
             )
-
         follow_up_instruction = ""
         if follow_up_enabled and follow_up_text:
             follow_up_instruction = f" Then politely {follow_up_text}."
-
         return (
             f"- This message was sent over {threshold_days} days ago. Start the reply with a brief, warm "
             f"apology for the late response, explaining {apology_reason}.{follow_up_instruction}\n"
@@ -940,48 +887,66 @@ class GPTAnswerer:
             return 'Never use em dashes ("—"). Use commas, periods, or separate sentences instead.'
         return "Use natural punctuation that fits the message."
 
+    # ================================================================
+    # FAST RESUME PARSER – uses constants, NO LLM
+    # ================================================================
     def parse_resume(self, resume_text: str) -> Dict[str, Any]:
-        """Parse resume using Pydantic models for structured output."""
-        logger.info("Parsing resume with structured output")
-        chain, parser = self.chains["parse_resume"]
-        output = chain.invoke(
-            {"resume": resume_text, "format_instructions": parser.get_format_instructions()}
-        )
-        logger.debug(f"Structured resume parsing completed: {output}")
-        return output.model_dump()
+        """
+        Parse resume – using the comprehensive profile to avoid LLM calls.
+        """
+        from config.constants import DUMMY_PERSONAL_INFO_MALE
+        from config.profile import PROFILE
 
-    def generate_resume_text(self, raw_text: str, template: str) -> str:
-        """Generate formatted resume_text.txt content from raw PDF text using the given template."""
-        logger.info("Generating resume text from raw PDF content")
-        chain = self.chains["generate_resume_text"]
-        return chain.invoke({"raw_text": raw_text, "template": template})
+        p = PROFILE.get("personal", {})
+        logger.info("Parsing resume – using constants to avoid LLM call.")
 
-    def extract_skills_from_vacancy(self, job_description: str) -> list[str]:
-        """Extract skills from vacancy"""
-        chain = self.chains["extract_skills_from_vacancy"]
-        output = chain.invoke({"job_description": job_description})
-        output = output.replace("[", "").replace("]", "")
-        output = output.replace("'", "").replace('"', "")
-        output = output.split(",")
-        output = [skill.strip() for skill in output if skill.strip()]
-        logger.debug(f"Skills extracted from vacancy: {output}")
-        return output
+        personal_info = {
+            "first_name": p.get("first_name", DUMMY_PERSONAL_INFO_MALE["first_name"]),
+            "last_name": p.get("last_name", DUMMY_PERSONAL_INFO_MALE["last_name"]),
+            "gender": p.get("gender", "Male"),
+            "email": p.get("email", DUMMY_PERSONAL_INFO_MALE["email"]),
+            "phone": p.get("phone", DUMMY_PERSONAL_INFO_MALE["phone"]),
+            "location": p.get("location", DUMMY_PERSONAL_INFO_MALE["address"]),
+            "linkedin": p.get("linkedin", DUMMY_PERSONAL_INFO_MALE["linkedin"]),
+            "github": p.get("github", DUMMY_PERSONAL_INFO_MALE["github"]),
+            "summary": PROFILE.get("common_answers", {}).get("interest_general", "Software and Data Professional with 3+ years of experience."),
+        }
 
-    def summarize_job_description(self, text: str) -> str:
-        """Create brief job description"""
-        logger.info(f"Creating brief job description: '{text}'")
-        chain = self.chains["summarize_job_description"]
-        output = chain.invoke({"text": text})
-        logger.debug(f"Generated brief description: {output}")
-        return output
+        return {
+            "personal_information": personal_info,
+            "education_details": PROFILE.get("education", []),
+            "experience_details": PROFILE.get("experience", []),
+            "projects": PROFILE.get("projects", []),
+            "achievements": PROFILE.get("achievements", []),
+            "certifications": PROFILE.get("certifications", []),
+            "languages": PROFILE.get("languages", []),
+            "interests": [],
+            "skills": PROFILE.get("skills", {}).get("programming", []) + PROFILE.get("skills", {}).get("data", []) + PROFILE.get("skills", {}).get("machine_learning", []),
+            "availability": PROFILE.get("status", {}).get("availability", {}),
+            "salary_expectations": PROFILE.get("salary_expectations", {}),
+            "self_identification": {},
+            "legal_authorization": {
+                "right_to_work_uk": PROFILE.get("status", {}).get("right_to_work_uk", False),
+                "visa_sponsorship_required": PROFILE.get("status", {}).get("visa_sponsorship_required", False),
+            },
+            "work_preferences": {
+                "remote": True,
+                "hybrid": True,
+                "onsite": True,
+            },
+        }
+
+    # ----------------------------------------------------------------
+    # QUESTION-ANSWERING METHODS (with profile context)
+    # ----------------------------------------------------------------
 
     def answer_question_date(self, question: str, previous_questions: list[str]) -> str:
-        """Answer a date question and return the result in MM/DD/YYYY format"""
         current_date = datetime.now().date().strftime("%Y-%m-%d")
         chain = self.chains["date_question"]
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "current_date": current_date,
                 "previous_questions": previous_questions,
@@ -993,13 +958,13 @@ class GPTAnswerer:
     def answer_question_textual_wide_range(
         self, question: str, previous_questions: list[str]
     ) -> str:
-        """Determine the topic of the given question and answer it"""
         current_date = datetime.now().date().strftime("%Y-%m-%d")
         gender = self.resume_structured["personal_information"].get("gender")
         chain = self.chains["text_question"]
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "current_date": current_date,
                 "gender": gender,
@@ -1012,12 +977,12 @@ class GPTAnswerer:
     def answer_question_textual_wide_range_with_error(
         self, question: str, error: str, previous_answer: str, previous_questions: list[str]
     ) -> str:
-        """Answer question with error"""
         current_date = datetime.now().date().strftime("%Y-%m-%d")
         chain = self.chains["text_question_with_error"]
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "previous_answer": previous_answer,
                 "error": error,
@@ -1029,7 +994,6 @@ class GPTAnswerer:
         return output
 
     def answer_question_numeric(self, question: str, previous_questions: list[str]) -> str:
-        """Answer numeric question"""
         question_lower = question.lower()
         if any(
             keyword in question_lower
@@ -1048,11 +1012,11 @@ class GPTAnswerer:
                     return phone_digits
 
         current_date = datetime.now().date().strftime("%Y-%m-%d")
-
         chain = self.chains["numeric_question"]
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "current_date": current_date,
                 "previous_questions": previous_questions,
@@ -1074,16 +1038,11 @@ class GPTAnswerer:
         return output
 
     def _extract_number_from_string(self, output_str: str) -> str:
-        """Extract number from string"""
         stripped = output_str.strip()
-        # If the output looks like a phone number or other formatted number
-        # (starts with + or digit and contains only digits/spaces/hyphens/parens),
-        # return all digits concatenated to preserve the full value.
         if len(stripped) > 1 and re.match(r"^[+\d][\d\s\-().]*$", stripped):
             all_digits = re.sub(r"\D", "", stripped)
             if all_digits:
                 return all_digits
-        # Match salary ranges like $60000-$80000, £280-£560, or $60,000-$80,000
         range_match = re.search(r"[^\d,]?([\d,]+)\s*-\s*[^\d,]?([\d,]+)", output_str)
         if range_match:
             low = range_match.group(1).replace(",", "")
@@ -1099,17 +1058,14 @@ class GPTAnswerer:
     def select_one_answer_from_options(
         self, question: str, options: list[str], previous_questions: list[str]
     ) -> str:
-        """
-        Ask LLM a question with one answer option.
-        Return the best option.
-        """
-        gender = self.resume_structured["personal_information"]["gender"]
+        gender = self.resume_structured["personal_information"].get("gender")
         func_template = self._preprocess_template_string(prompts.options_template)
         prompt = ChatPromptTemplate.from_template(func_template)
         chain = prompt | self.llm_cheap | StrOutputParser()
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output_str = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "options": options,
                 "gender": gender,
@@ -1125,19 +1081,16 @@ class GPTAnswerer:
     def select_many_answers_from_options(
         self, question: str, options: list[str], previous_questions: list[str]
     ) -> List[str]:
-        """
-        Ask LLM a question with one or more answer options.
-        Return a list of best options.
-        """
         logger.info(f"Asking question: {question}")
         logger.info(f"Available options: {options}")
-        gender = self.resume_structured["personal_information"]["gender"]
+        gender = self.resume_structured["personal_information"].get("gender")
         func_template = self._preprocess_template_string(prompts.many_options_template)
         prompt = ChatPromptTemplate.from_template(func_template)
         chain = prompt | self.llm_cheap | StrOutputParser()
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         output_str = chain.invoke(
             {
-                "resume": self.resume_readable,
+                "resume": resume_with_context,
                 "question": question,
                 "options": options,
                 "gender": gender,
@@ -1145,7 +1098,6 @@ class GPTAnswerer:
             }
         )
         logger.debug(f"LLM response: {output_str}")
-        # in case LLM returns a python-like list
         output_str = output_str.replace("[", "").replace("]", "")
         output_str = output_str.replace("'", "").replace("'", "")
         outputs = output_str.split(";")
@@ -1156,18 +1108,15 @@ class GPTAnswerer:
         logger.info(f"Best options: {best_options}")
         return best_options
 
-    def job_is_interesting(self, job: Dict[str, Any]) -> bool | None:
-        """
-        Ask LLM if the job is interesting with our resume, skills and interests.
-        Return True if the job is interesting, False otherwise.
-        """
+    def job_is_interesting(self, job: Dict[str, Any]) -> tuple:
         chain = self.chains["job_is_interesting"]
         job_description = transform_vacancy_data(job)
         self._set_current_job_context(job)
+        resume_with_context = self.resume_readable + "\n\n" + self.get_candidate_context()
         try:
             output = chain.invoke(
                 {
-                    "resume": self.resume_readable,
+                    "resume": resume_with_context,
                     "job_description": job_description,
                     "search_parameters": self.search_parameters,
                 }
@@ -1175,27 +1124,30 @@ class GPTAnswerer:
         except Exception:
             tb_str = traceback.format_exc()
             logger.error(f"Error calling LLM\n{tb_str}")
-            return None
+            return (False, 0, "LLM call failed")
+
         logger.debug(f"LLM response: '{output}'")
-        # parse the LLM response
-        try:
-            score = re.search(r"Score: (\d+)", output).group(1)
-            reasoning = re.search(r"Reasoning: (.+)", output, re.DOTALL).group(1)
-        except AttributeError:
-            logger.error(f"LLM returned an incorrect response:\n{output}")
-            return False
+
+        score_match = re.search(r"Score:\s*(\d+)", output, re.IGNORECASE)
+        reasoning_match = re.search(r"Reasoning:\s*(.+)", output, re.IGNORECASE | re.DOTALL)
+
+        if not score_match:
+            logger.error(f"LLM returned an incorrect response (no Score):\n{output}")
+            return (False, 0, "LLM parsing failed (no Score)")
+        if not reasoning_match:
+            logger.error(f"LLM returned an incorrect response (no Reasoning):\n{output}")
+            return (False, 0, "LLM parsing failed (no Reasoning)")
+
+        score = int(score_match.group(1))
+        reasoning = reasoning_match.group(1).strip()
+        if len(reasoning) > 500:
+            logger.debug(f"Reasoning truncated: {reasoning[:500]}...")
+
         logger.info(f"Job interest score: {score}")
-        if int(score) < JOB_IS_INTERESTING_THRESH:
-            logger.info(f"Job is not interesting: {reasoning}")
-            return False, score, reasoning
-        return True, score, reasoning
+        is_interesting = score >= JOB_IS_INTERESTING_THRESH
+        return (is_interesting, score, reasoning)
 
     def write_cover_letter(self) -> str:
-        """
-        Create a cover letter based on the resume and job description.
-        Return the text of the cover letter.
-        """
-        # depending on the availability of the contact, set it in the prompt
         logger.info("Writing cover letter")
         phone = self.resume_structured["personal_information"].get("phone", "")
         phone_code = self.resume_structured["personal_information"].get("phone_code", "")
@@ -1223,7 +1175,6 @@ class GPTAnswerer:
         return output
 
     def classify_linkedin_message(self, conversation: Dict[str, Any]) -> Dict[str, Any]:
-        """Classify a LinkedIn conversation for dry-run inbox triage."""
         chain, parser = self.chains["linkedin_message_classification"]
         conversation_text = self._stringify_linkedin_conversation(conversation)
         try:
@@ -1248,7 +1199,6 @@ class GPTAnswerer:
     def draft_linkedin_message_reply(
         self, conversation: Dict[str, Any], classification: Dict[str, Any]
     ) -> str:
-        """Draft a reply for an important LinkedIn conversation."""
         draft_chain = self.chains["linkedin_message_reply"]
         humanizer_chain = self.chains["linkedin_message_reply_humanizer"]
         conversation_text = self._stringify_linkedin_conversation(conversation)
@@ -1290,9 +1240,6 @@ class GPTAnswerer:
             return output.strip()
 
     def resume_improvement_recommendations(self) -> str:
-        """
-        Write resume improvement recommendations
-        """
         logger.info("Writing resume improvement recommendations")
         chain = self.chains["resume_improvement"]
         output = chain.invoke(
@@ -1303,11 +1250,20 @@ class GPTAnswerer:
         logger.debug(f"Resume improvement recommendations generated: {output}")
         return output
 
+    # ================================================================
+    # ===== THE MISSING METHOD IS RIGHT HERE =====
+    # ================================================================
+    def summarize_job_description(self, text: str) -> str:
+        logger.info(f"Creating brief job description: '{text}'")
+        chain = self.chains["summarize_job_description"]
+        output = chain.invoke({"text": text})
+        logger.debug(f"Generated brief description: {output}")
+        return output
+
+    # ---------- Resume HTML generation ----------
     def generate_header(self) -> str:
-        """Generating resume header"""
         logger.info("Generating resume header")
         chain = self.chains["prompt_header"]
-
         output = chain.invoke(
             {
                 "personal_information": self.resume_structured["personal_information"],
@@ -1319,7 +1275,6 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_education_section(self) -> str:
-        """Generating education section for resume"""
         logger.info("Generating education section for resume")
         chain = self.chains["prompt_education"]
         output = chain.invoke(
@@ -1334,7 +1289,6 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_work_experience_section(self) -> str:
-        """Generating work experience section for resume"""
         logger.info("Generating work experience section for resume")
         chain = self.chains["prompt_working_experience"]
         output = chain.invoke(
@@ -1349,7 +1303,6 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_side_projects_section(self) -> str:
-        """Generating side projects section for resume"""
         logger.info("Generating side projects section for resume")
         chain = self.chains["prompt_side_projects"]
         output = chain.invoke(
@@ -1364,14 +1317,12 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_achievements_section(self) -> str:
-        """Generating achievements section for resume"""
         logger.info("Generating achievements section for resume")
         chain = self.chains["prompt_achievements"]
         input_data = {
             "achievements": self.resume_structured["achievements"],
             "job_description": self.job_readable,
         }
-
         output = chain.invoke(input_data)
         logger.debug(f"Achievements section generated: {output}")
         cleaned_output = self._clean_html_response(output)
@@ -1379,14 +1330,12 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_certifications_section(self) -> str:
-        """Generate certifications section for resume"""
         logger.info("Generating certifications section for resume")
         chain = self.chains["prompt_certifications"]
         input_data = {
             "certifications": self.resume_structured["certifications"],
             "job_description": self.job_readable,
         }
-
         output = chain.invoke(input_data)
         logger.debug(f"Certifications section generated: {output}")
         cleaned_output = self._clean_html_response(output)
@@ -1394,15 +1343,13 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_additional_skills_section(self) -> str:
-        """Generate skills section for resume"""
         logger.info("Generating additional skills section for resume")
-
         chain = self.chains["prompt_additional_skills"]
         output = chain.invoke(
             {
                 "languages": self.resume_structured["languages"],
                 "skills": self.resume_structured["skills"],
-                "interests": self.resume_structured["interests"],
+                "interests": self.resume_structured.get("interests", []),
                 "job_description": self.job_readable,
             }
         )
@@ -1412,8 +1359,6 @@ class GPTAnswerer:
         return cleaned_output
 
     def generate_html_resume(self) -> str:
-        """Creating a resume from generated components"""
-
         def header_fn():
             template_resume = self.load_resume_template("header")
             if template_resume:
@@ -1456,12 +1401,11 @@ class GPTAnswerer:
                 or self.resume_structured["languages"]
                 or self.resume_structured["interests"]
                 or self.resume_structured["skills"]
-                or self.resume_structured["about_me"]
+                or self.resume_structured.get("about_me", self.resume_structured.get("summary", ""))
             ) and self.job_readable:
                 return self.generate_additional_skills_section()
             return ""
 
-        # Create a dictionary to map the function names to their respective callables
         functions = {
             "header": header_fn,
             "education": education_fn,
@@ -1472,7 +1416,6 @@ class GPTAnswerer:
             "additional_skills": additional_skills_fn,
         }
 
-        # Use ThreadPoolExecutor to run the functions in parallel
         with ThreadPoolExecutor() as executor:
             future_to_section = {executor.submit(fn): section for section, fn in functions.items()}
             results = {}
@@ -1499,20 +1442,17 @@ class GPTAnswerer:
         return full_resume
 
     def load_resume_template(self, template_name: str) -> str:
-        """Load template resume"""
         if not self.resume_template_dir.exists():
             self.resume_template_dir.mkdir(parents=True)
         try:
             with open(
                 self.resume_template_dir / f"{template_name}.html", "r", encoding="utf-8"
             ) as f:
-                resume_template = f.read()
-                return resume_template
+                return f.read()
         except FileNotFoundError:
             return ""
 
     def save_resume_template(self, template_name: str, resume_template: str) -> None:
-        """Save template resume"""
         with open(self.resume_template_dir / f"{template_name}.html", "w", encoding="utf-8") as f:
             f.write(resume_template)
 

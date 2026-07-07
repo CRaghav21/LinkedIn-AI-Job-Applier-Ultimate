@@ -1,34 +1,150 @@
-# Dummy personal data for anonymization (male)
+# config/constants.py
+
+# Import the comprehensive profile for use by LLM answerer and other modules
+from config.profile import PROFILE
+
+# ================================================================
+# REAL PERSONAL DATA (used by auto‑filler in utils.py)
+# ================================================================
+
+NAME = "Raghavendra J C"
+FIRST_NAME = "Raghavendra"
+LAST_NAME = "J C"
+PHONE = "+44 7551538278"          # or "07551538278"
+EMAIL = "craghavendra910@gmail.com"
+LINKEDIN = "https://www.linkedin.com/in/raghavendra-j-c-982b811a2"
+GITHUB = "https://github.com/CRaghav21"
+ZIP_CODE = "B19 3SJ"
+ADDRESS = "Birmingham, UK"
+
+# Professional summary
+SUMMARY = (
+    "Software and Data Professional with 3+ years of experience at Amazon and IBM, "
+    "combining software development, data engineering, and automation expertise. "
+    "Proven ability to build scalable automation systems, develop applications, and "
+    "extract insights from large datasets using Python, SQL, and BI tools. "
+    "Currently pursuing an MSc in Advanced Computer Science at University of Birmingham, "
+    "with a focus on algorithms, intelligent systems, and software engineering. "
+    "Seeking Software Developer / Data Engineer / ML Engineer roles."
+)
+
+# Work experience – list of dicts (each with title, company, location, start_date, end_date, description)
+EXPERIENCE = [
+    {
+        "title": "Data Analyst",
+        "company": "Amazon",
+        "location": "Bangalore, India",
+        "start_date": "2023-06",
+        "end_date": "2025-05",
+        "description": (
+            "Designed and developed an internal workflow orchestration and automation platform using Python, "
+            "enabling priority-based, sequential, non-sequential, and scheduled execution of business-critical "
+            "reporting workflows. Architected end-to-end reporting pipelines integrating SQL databases, Excel datasets, "
+            "internal reporting systems, APIs, and Amazon QuickSight dashboards. Built secure access controls with "
+            "corporate email authentication and OTP verification. Automated report generation, validation, and "
+            "distribution through Outlook integrations. Engineered ETL workflows to transform raw operational and "
+            "financial data into actionable insights, KPI reports, and dashboards. Reduced daily reporting effort "
+            "from approximately 5–6 hours to 1.5–2 hours. Supported reporting operations for 12 client accounts. "
+            "Implemented monitoring, validation, logging, and error-handling mechanisms. Developed interactive "
+            "dashboards using Power BI and Amazon QuickSight."
+        )
+    },
+    {
+        "title": "Application Developer",
+        "company": "IBM",
+        "location": "Bangalore, India",
+        "start_date": "2022-04",
+        "end_date": "2023-04",
+        "description": (
+            "Wrote, tested, and maintained C and C# code for various applications. Worked with databases (IBM Db2, "
+            "SQL Server) for data manipulation and integration. Assisted in designing application components and "
+            "systems. Documented code, technical specifications, and development processes. Built and debugged "
+            "test cases under the application development lifecycle."
+        )
+    }
+]
+
+# Education – list of dicts (degree, institution, location, graduation_year, description optional)
+EDUCATION = [
+    {
+        "degree": "MSc Advanced Computer Science",
+        "institution": "University of Birmingham",
+        "location": "Birmingham, UK",
+        "graduation_year": "2026",
+        "description": "Modules: Algorithms & Complexity, Intelligent Software Engineering, Interactive Intelligent Systems, Dependable and Distributed Systems, Advanced Networking, Human-Computer Interaction, Programming Language Principles."
+    },
+    {
+        "degree": "Bachelor of Engineering – Computer Science",
+        "institution": "Visvesvaraya Technological University",
+        "location": "India",
+        "graduation_year": "2021"
+    }
+]
+
+# Skills – list of strings
+SKILLS = [
+    "Python", "C", "C#", "SQL",
+    "Pandas", "NumPy", "NLTK", "TextBlob", "VADER",
+    "Power BI", "Tableau", "Excel VBA", "R",
+    "Algorithms", "Data Structures", "OOP", "SDLC", "Automation", "ETL",
+    "Data Modeling", "Data Visualization", "ETL Pipelines", "API Integration"
+]
+
+# Projects – list of dicts (title, description, technologies, year, etc.)
+PROJECTS = [
+    {
+        "title": "Automation System (Python GUI + Reporting Engine)",
+        "company": "Amazon",
+        "year": "2024–2025",
+        "description": (
+            "Built a standalone Python application for automated reporting with scheduling and zero manual intervention. "
+            "Integrated Excel, databases, and dashboards into a unified system. Designed GUI using Tkinter with control "
+            "features (start/stop/process monitoring). Reduced operational workload and improved reporting efficiency."
+        )
+    },
+    {
+        "title": "Sentiment Analysis System (NLP Project)",
+        "company": "Amazon",
+        "year": "2025",
+        "description": (
+            "Developed NLP pipeline using NLTK, VADER, TextBlob. Automated classification of customer feedback into "
+            "categories. Built GUI-based tool for non-technical users. Implemented multi-threading for performance optimisation."
+        )
+    }
+]
+
+# Certifications – list of strings
+CERTIFICATIONS = [
+    "Power BI for Beginners – Simplilearn",
+    "Game Development using PyGame – GUVI"
+]
+
+# Languages – list of strings (if any)
+LANGUAGES = ["English", "Kannada", "Hindi"]
+
+# ================================================================
+# DUMMY DICT (kept for compatibility, now filled with real data)
+# ================================================================
+
 DUMMY_PERSONAL_INFO_MALE = {
-    "name": "Zorquill Thalaorix",
-    "first_name": "Zorquill",
-    "last_name": "Thalaorix",
-    "last_name_2": "Thalaris",
-    # "birthday": "03.05.1993",
-    "phone": "9335753535",
-    "email": "zorquill_thalaorix@gmail.com",
-    "linkedin": "https://linkedin.com/in/zorquill_thalaorix-f3e57c712",
-    "github": "https://github.com/zorquill_thalaorix",
-    "zip_code": "09876",
-    "address": "1234 Imaginary Lane",
+    "name": "Raghavendra J C",
+    "first_name": "Raghavendra",
+    "last_name": "J C",
+    "last_name_2": "J C",
+    "phone": "+44 7551538278",
+    "email": "craghavendra910@gmail.com",
+    "linkedin": "https://www.linkedin.com/in/raghavendra-j-c-982b811a2",
+    "github": "https://github.com/CRaghav21",
+    "zip_code": "B19 3SJ",
+    "address": "Birmingham, UK",
 }
 
-# Dummy personal data for anonymization (female)
-DUMMY_PERSONAL_INFO_FEMALE = {
-    "name": "Zorquillia Thalaorix",
-    "first_name": "Zorquillia",
-    "last_name": "Thalaorix",
-    "last_name_2": "Thalaris",
-    # "birthday": "03.05.1993",
-    "phone": "9335753535",
-    "email": "zorquillia_thalaorix@gmail.com",
-    "linkedin": "https://linkedin.com/in/zorquillia_thalaorix-f3e57c712",
-    "github": "https://github.com/zorquillia_thalaorix",
-    "zip_code": "09876",
-    "address": "1234 Imaginary Lane",
-}
+DUMMY_PERSONAL_INFO_FEMALE = DUMMY_PERSONAL_INFO_MALE.copy()  # same for now
 
-# Paths to log files and settings
+# ================================================================
+# PATHS AND DIRECTORIES (keep as is)
+# ================================================================
+
 SEARCH_CONFIG_FILE = "config/search_config.yaml"
 OUTPUT_DIR_LINKEDIN = "data/output/linkedin"
 OUTPUT_DIR_INDEED = "data/output/indeed"
@@ -41,13 +157,17 @@ BROWSER_STORAGE_STATE = "browser_session/browser_state.json"
 RESUME_TEXT_TEMPLATE_FILE = "examples/data/resumes/resume_text.txt"
 APP_CONFIG_FILE = "config/app_config.yaml"
 
-# Default cost per token fallback when model is not in PRICE_DICT
+# ================================================================
+# COST PER TOKEN (keep as is)
+# ================================================================
+
 CUSTOM_COST_PER_TOKEN = {
     "input_cost_per_token": 0.25 / 1_000_000,
     "output_cost_per_token": 1.50 / 1_000_000,
 }
 
 # Per-model token pricing (input/output cost per token in USD)
+# This is the full PRICE_DICT as shown in your snippet – keep it unchanged.
 PRICE_DICT: dict[str, dict[str, float]] = {
     # Gemini
     "gemini-3.1-flash-lite-preview": {

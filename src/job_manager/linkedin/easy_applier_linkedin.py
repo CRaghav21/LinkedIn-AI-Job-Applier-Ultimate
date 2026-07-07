@@ -33,6 +33,9 @@ from src.utils.utils import (
     sanitize_text,
 )
 
+# ===== IMPORT THE PROFILE FOR HARDCODED ANSWERS =====
+from config.profile import PROFILE
+
 
 class LinkedInEasyApplier(BaseEasyApplier):
     def __init__(
@@ -678,20 +681,6 @@ class LinkedInEasyApplier(BaseEasyApplier):
                 parent = upload_element.locator("xpath=..").first
                 container_text = (await parent.text_content() or "").lower()
 
-                # Also check the label text if available
-                # try:
-                #     input_id = await upload_element.get_attribute("id") or ""
-                #     if input_id:
-                #         label_text = (
-                #             await self.page.locator(
-                #                 f"xpath=//label[@for='{input_id}']"
-                #             ).first.text_content()
-                #             or ""
-                #         ).lower()
-                #         container_text += " " + label_text
-                # except Exception:
-                #     pass
-
                 # Make the hidden input visible for uploading
                 try:
                     await upload_element.evaluate("el => el.classList.remove('hidden')")
@@ -705,7 +694,6 @@ class LinkedInEasyApplier(BaseEasyApplier):
 
                 accept_types = (await upload_element.get_attribute("accept") or "").lower()
 
-                # output = self.gpt_answerer.resume_or_cover(container_text)
                 if "image/" in accept_types or "photo" in container_text:
                     logger.info("Uploading photo")
                     await self._create_and_upload_photo(upload_element, job)
@@ -991,7 +979,6 @@ class LinkedInEasyApplier(BaseEasyApplier):
         checkbox_selectors = [
             "input[type='checkbox']",
             ".fb-form-element__checkbox",
-            # "[data-test-text-selectable-option__input]",
             "[data-test-checkbox-form-component] input[type='checkbox']",
         ]
 
@@ -1093,12 +1080,35 @@ class LinkedInEasyApplier(BaseEasyApplier):
                 logger.debug("No checkbox options found, skipping")
                 return False
 
+            # --- NEW: Hardcoded authorization answers ---
+            work_prefs = PROFILE.get('work_preferences', {})
+            auth_answers = work_prefs.get('authorization_answers', {})
+            for key, answer in auth_answers.items():
+                if key.lower() in question_text.lower():
+                    logger.info(f"Authorization question detected: '{question_text}'. Using hardcoded answer: {answer}")
+                    selected_options = [answer]
+                    # Select the checkbox matching the answer
+                    for checkbox, label_text in checkbox_data:
+                        if label_text.lower() == answer.lower():
+                            await self._click_checkbox_safely(checkbox, section)
+                            logger.info(f"Selected checkbox: {label_text}")
+                            # Save answer
+                            question_data = Question(
+                                question_type="checkbox",
+                                question=question_text,
+                                answer=selected_options,
+                            )
+                            self._save_questions(question_data)
+                            return True
+                    # If not found, fallback to LLM
+                    break
+
             # Use LLM to select which checkboxes to check
             try:
                 logger.info(f"Asking LLM to select checkboxes for question: {question_text}")
                 logger.info(f"Available options: {checkbox_options}")
 
-                # Look for existing answer if it's not a cover letter field
+                # Look for existing answer
                 existing_answer = None
                 current_question_sanitized = sanitize_text(question_text)
                 for item in self.all_questions:
@@ -1347,7 +1357,33 @@ class LinkedInEasyApplier(BaseEasyApplier):
             # Check if it's a cover letter field (case-insensitive)
             is_cover_letter = "cover letter" in question_text.lower()
             logger.info(f"question: {question_text}")
-            # Look for existing answer if it's not a cover letter field
+
+            # ================================================================
+            # 1. DETECT SALARY QUESTIONS – use profile salary
+            # ================================================================
+            salary_keywords = ["salary", "compensation", "pay", "wage", "rate", "earnings"]
+            is_salary_question = any(keyword in question_text.lower() for keyword in salary_keywords)
+
+            if is_salary_question:
+                from config.profile import PROFILE
+                salary_single = PROFILE.get("salary_single", "£45,000")
+                # Extract digits only (e.g., "45000")
+                import re
+                digits = re.sub(r'[^\d]', '', salary_single)
+                if digits:
+                    answer = digits
+                else:
+                    answer = salary_single
+                logger.info(f"Salary question detected. Using answer: {answer}")
+                await text_field.fill(answer)
+                await self._process_autocomplete_suggestions(text_field)
+                question_data = Question(question_type="numeric", question=question_text, answer=answer)
+                self._save_questions(question_data)
+                return True
+
+            # ================================================================
+            # 2. CHECK FOR EXISTING CACHED ANSWER
+            # ================================================================
             existing_answer = None
             if not is_cover_letter:
                 cached_question = self._find_cached_question(question_text, question_type)
@@ -1363,6 +1399,22 @@ class LinkedInEasyApplier(BaseEasyApplier):
                             cached_question.question_type,
                         )
 
+            # ================================================================
+            # 3. DEFAULT EXPERIENCE YEARS FOR SKILL-RELATED QUESTIONS (only if not salary)
+            # ================================================================
+            if is_numeric and not existing_answer and question_text and not is_salary_question:
+                from config.profile import PROFILE
+                work_prefs = PROFILE.get('work_preferences', {})
+                default_years = work_prefs.get('default_experience_years', {})
+                for skill, years in default_years.items():
+                    if skill.lower() in question_text.lower():
+                        logger.info(f"Using default years for '{skill}': {years}")
+                        existing_answer = str(years)
+                        break
+
+            # ================================================================
+            # 4. GENERATE OR USE EXISTING ANSWER
+            # ================================================================
             if existing_answer and not is_cover_letter:
                 answer = existing_answer
                 logger.info(f"Using existing answer: {answer}")
@@ -1502,11 +1554,11 @@ class LinkedInEasyApplier(BaseEasyApplier):
 
                     question_text = ""
                     for label_selector in label_selectors:
-                        label = await find_element_safely(section, label_selector, "css selector")
+                        label = await find_element_safely(section, label_selector, "css selector")  
                         if label:
                             question_text = (await label.text_content() or "").lower().strip()
                             question_text = self._deduplicate_question_text(question_text)
-                            self.previous_question_texts.append(question_text)
+                            self.previous_question_texts.append(question_text)  
                             break
                 except Exception as e:
                     logger.warning(f"Could not find label for dropdown: {e}")
@@ -1520,6 +1572,74 @@ class LinkedInEasyApplier(BaseEasyApplier):
                     current_selection = ""
                 logger.debug(f"Current selection: {current_selection}")
 
+                from config.profile import PROFILE
+                work_prefs = PROFILE.get('work_preferences', {})
+                default_commute_answer = work_prefs.get('default_commute_answer', 'Yes')
+                default_passport_answer = work_prefs.get('default_passport_answer', 'No')
+
+                # --- NEW: Authorization hardcoded answers for dropdowns ---
+                auth_answers = work_prefs.get('authorization_answers', {})
+                for key, answer in auth_answers.items():
+                    if key.lower() in question_text.lower():
+                        logger.info(f"Authorization dropdown detected: '{question_text}'. Using hardcoded answer: {answer}")
+                        if answer in options:
+                            await self._select_dropdown_option(dropdown, answer)
+                            self._save_questions(
+                                Question(
+                                    question_type="dropdown",
+                                    question=question_text,
+                                    answer=answer,
+                                )
+                            )
+                            return True
+                        else:
+                            logger.warning(f"Hardcoded answer '{answer}' not in options. Falling back to LLM.")
+                            break  # fallback to LLM
+
+                question_lower = question_text.lower()
+
+                # ------------------------------------------------------------
+                # 1. PASSPORT / CITIZENSHIP / NATIONALITY QUESTIONS
+                # ------------------------------------------------------------
+                if any(keyword in question_lower for keyword in ["passport", "citizen", "nationality", "british", "uk passport", "right to work"]):
+                    logger.info(f"Passport/citizenship question detected: '{question_text}'. Defaulting to '{default_passport_answer}'.")
+                    if default_passport_answer in options:
+                        await self._select_dropdown_option(dropdown, default_passport_answer)
+                        self._save_questions(
+                            Question(
+                                question_type="dropdown",
+                                question=question_text,
+                                answer=default_passport_answer,
+                            )
+                        )
+                        return True
+                    else:
+                        logger.warning(f"Default passport answer '{default_passport_answer}' not in options {options}. Falling back to LLM.")
+
+                # ------------------------------------------------------------
+                # 2. COMMUTE / RELOCATION / TRAVEL QUESTIONS
+                # ------------------------------------------------------------
+                if any(keyword in question_lower for keyword in [
+                    "commute", "relocate", "travel", "move", "onsite", "in-office",
+                    "on-site", "relocation", "willing", "available", "able to", "open to"
+                ]):
+                    logger.info(f"Commute/relocation question detected: '{question_text}'. Defaulting to '{default_commute_answer}'.")
+                    if default_commute_answer in options:
+                        await self._select_dropdown_option(dropdown, default_commute_answer)
+                        self._save_questions(
+                            Question(
+                                question_type="dropdown",
+                                question=question_text,
+                                answer=default_commute_answer,
+                            )
+                        )
+                        return True
+                    else:
+                        logger.warning(f"Default commute answer '{default_commute_answer}' not in options {options}. Falling back to LLM.")
+
+                # ------------------------------------------------------------
+                # 3. OTHER DROPDOWNS – use cached answer or LLM
+                # ------------------------------------------------------------
                 if self._is_meaningful_existing_answer(current_selection):
                     logger.info(
                         f"Dropdown question '{question_text}' already has a selected answer: {current_selection}"
@@ -1558,8 +1678,8 @@ class LinkedInEasyApplier(BaseEasyApplier):
                     if self._is_no_info_answer(answer):
                         raise NoInfoException(f"No info found for question: {question_text}")
                     question_data = Question(
-                        question_type="dropdown", question=question_text, answer=answer
-                    )
+                            question_type="dropdown", question=question_text, answer=answer
+                        )
                     self._save_questions(question_data)
                     await self._select_dropdown_option(dropdown, answer)
                     logger.debug(f"Selected new dropdown answer: {answer}")

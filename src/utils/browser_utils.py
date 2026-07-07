@@ -1,10 +1,12 @@
 import asyncio
 import base64
+import json
 import os
 import random
 import re
 import time
 from typing import Any, List, Optional
+from pathlib import Path
 
 from config.app_config import HEADLESS_MODE, JOB_SITE
 
@@ -12,6 +14,7 @@ if JOB_SITE == "indeed":
     from patchright.async_api import Browser, BrowserContext, Page, async_playwright
 else:
     from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+
 from config.constants import BROWSER_STORAGE_STATE, DEBUG_DIR
 from config.logger_config import logger
 
@@ -59,18 +62,21 @@ def ensure_playwright_profile() -> str:
 
 
 async def create_playwright_browser() -> tuple[Browser, BrowserContext, Page]:
-    """Create Playwright browser, context and page asynchronously (PRIMARY METHOD)
-
-    Uses patchright (Chromium-based) which patches automation detection signals
-    to bypass Cloudflare and other bot detection systems.
-    Session cookies are persisted via browser_state.json.
+    """
+    Create a Playwright browser using a persistent context to avoid the
+    "storage_state AND user_data_dir" conflict. This allows external sites
+    (Google Forms, Workday, etc.) to work reliably.
     """
     logger.info("Creating Playwright browser (async)")
 
     try:
         ensure_playwright_profile()
+
+        # Use a persistent user data directory – this stores cookies & session
+        user_data_dir = Path("browser_session") / "user_data"
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+
         viewport = {"width": 1920, "height": 1080}
-        storage_state = BROWSER_STORAGE_STATE if os.path.exists(BROWSER_STORAGE_STATE) else None
 
         args = [
             "--window-position=0,0",
@@ -92,35 +98,51 @@ async def create_playwright_browser() -> tuple[Browser, BrowserContext, Page]:
         ]
 
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(
+
+        # Launch persistent context – returns a BrowserContext, not a Browser
+        context = await playwright.chromium.launch_persistent_context(
+            user_data_dir=str(user_data_dir),
             headless=HEADLESS_MODE,
             args=args,
-        )
-
-        context = await browser.new_context(
             viewport=viewport,
             screen=viewport,
-            storage_state=storage_state,
             locale="en-US",
             permissions=["notifications"],
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            accept_downloads=True,
+            java_script_enabled=True,
+            bypass_csp=True,
         )
 
-        page = await context.new_page()
+        # Optionally load storage state (cookies) from our own json file
+        if Path(BROWSER_STORAGE_STATE).exists():
+            try:
+                with open(BROWSER_STORAGE_STATE, 'r') as f:
+                    storage_state = json.load(f)
+                if storage_state.get('cookies'):
+                    await context.add_cookies(storage_state['cookies'])
+                    logger.info(f"Loaded storage state from {BROWSER_STORAGE_STATE}")
+            except Exception as e:
+                logger.warning(f"Failed to load storage state: {e}")
 
-        context.on(
-            "page",
-            lambda p: asyncio.ensure_future(p.set_viewport_size(viewport)),
-        )
+        # Get or create a page
+        pages = context.pages
+        if pages:
+            page = pages[0]
+        else:
+            page = await context.new_page()
 
+        # Set default timeout
+        page.set_default_timeout(60000)  # 60 seconds
+
+        # Enable tracing if debug mode
         if DEBUG_MODE:
             await context.tracing.start(screenshots=True, snapshots=True, sources=True)
-            logger.info(
-                f"Playwright tracing enabled — trace will be saved to {DEBUG_DIR}/trace.zip"
-            )
+            logger.info(f"Playwright tracing enabled — trace will be saved to {DEBUG_DIR}/trace.zip")
 
-        logger.info("Playwright browser created successfully")
-        return browser, context, page
+        logger.info("Playwright browser created successfully (persistent context)")
+        # Return context as both browser and context (caller expects tuple of 3)
+        return context, context, page
 
     except Exception as e:
         logger.error(f"Failed to create Playwright browser: {e}")
@@ -152,8 +174,6 @@ async def save_browser_session(context: BrowserContext) -> None:
         storage_state = await context.storage_state()
 
         with open(BROWSER_STORAGE_STATE, "w") as f:
-            import json
-
             json.dump(storage_state, f)
 
         logger.info(f"Playwright session saved to {BROWSER_STORAGE_STATE}")
@@ -161,10 +181,20 @@ async def save_browser_session(context: BrowserContext) -> None:
         logger.error(f"Failed to save Playwright session: {e}")
 
 
+# ================================================================
+# 🔧 UPDATED: safe_click with JavaScript fallback and higher timeout
+# ================================================================
 async def safe_click(
-    page: Page, selector: str, timeout: int = 1000, element_number: int = 0
+    page: Page,
+    selector: str,
+    timeout: int = 10000,          # increased from 1000
+    element_number: int = 0,
+    force: bool = False            # added force parameter
 ) -> bool:
-    """Safely click element with retries (async)"""
+    """
+    Safely click element with retries and JavaScript fallback when normal click fails
+    (e.g., due to overlay interference like #interop-outlet).
+    """
     try:
         locator = page.locator(selector)
         element_count = await locator.count()
@@ -174,7 +204,7 @@ async def safe_click(
             await debug_capture(page, "click_not_found")
             return False
 
-        # Select the first matched element (even if multiple)
+        # Select the target element
         target = locator.nth(element_number) if element_count > 1 else locator
 
         if element_count > 1:
@@ -195,9 +225,17 @@ async def safe_click(
         pause_time = random.uniform(0.1, 0.3)
         await asyncio.sleep(pause_time)
 
-        await target.click(timeout=timeout)
-        logger.debug(f"Successfully clicked: {selector}")
-        return True
+        # Try normal click first
+        try:
+            await target.click(timeout=timeout, force=force)
+            logger.debug(f"Successfully clicked (normal): {selector}")
+            return True
+        except Exception as click_err:
+            # If normal click fails (overlay), use JavaScript click
+            logger.debug(f"Normal click failed for '{selector}': {click_err}. Trying JS click.")
+            await page.evaluate("el => el.click()", target)
+            logger.debug(f"Successfully clicked (JavaScript): {selector}")
+            return True
 
     except Exception as e:
         logger.warning(f"Failed to click element '{selector}': {e}")

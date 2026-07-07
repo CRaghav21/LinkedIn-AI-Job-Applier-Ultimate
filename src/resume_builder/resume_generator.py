@@ -1,8 +1,12 @@
 import re
+from pathlib import Path
 from string import Template
 from typing import Any
 
+from config.constants import RESUME_DIR
+from config.logger_config import logger
 from src.job_manager.resume_anonymizer import ResumeAnonymizer
+from src.utils.utils import load_yaml_file
 
 
 class ResumeGenerator:
@@ -36,8 +40,38 @@ class ResumeGenerator:
         """Generate resume"""
         self._create_resume(style_path, temp_html_path)
 
+    def _ensure_structured_data(self) -> None:
+        """
+        Ensure that the GPTAnswerer has structured data.
+        If it's empty, load from structured_resume.yaml and set it.
+        """
+        structured = getattr(self.gpt_resume_generator, 'resume_structured', None)
+        if not structured or not structured.get('experience_details') and not structured.get('education_details'):
+            logger.warning("GPTAnswerer has no structured data or it's empty. Loading from YAML...")
+            yaml_path = Path(RESUME_DIR) / "structured_resume.yaml"
+            if yaml_path.exists():
+                try:
+                    loaded = load_yaml_file(yaml_path)
+                    # Set it on the GPTAnswerer
+                    self.gpt_resume_generator.resume_structured = loaded
+                    # Also set resume_readable if needed (optional)
+                    logger.info(f"Loaded structured resume from {yaml_path} with {len(loaded.get('experience_details', []))} experiences, {len(loaded.get('education_details', []))} educations, {len(loaded.get('skills', []))} skills.")
+                except Exception as e:
+                    logger.error(f"Failed to load structured_resume.yaml: {e}")
+            else:
+                logger.error(f"structured_resume.yaml not found at {yaml_path}. Cannot generate full resume.")
+        else:
+            # Log what we have
+            exp_count = len(structured.get('experience_details', []))
+            edu_count = len(structured.get('education_details', []))
+            skill_count = len(structured.get('skills', []))
+            logger.info(f"Structured resume already has: {exp_count} experiences, {edu_count} educations, {skill_count} skills.")
+
     def _create_resume(self, style_path: str, temp_html_path):
         """Helper method for generating resumes"""
+        # Ensure structured data is present
+        self._ensure_structured_data()
+
         template = Template(self.html_template)
         html_resume = self.gpt_resume_generator.generate_html_resume()
         deanonymized_html_resume = self.resume_anonymizer.deanonymize_text(html_resume)
